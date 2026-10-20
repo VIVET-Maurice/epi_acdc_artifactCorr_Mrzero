@@ -1,0 +1,5 @@
+# Experimental Twix/Pulseq readers used by notebook 03.
+-r requirements.txt
+pydicom>=2.4,<4
+twixtools==0.24
+pypulseq==1.5.0.post1

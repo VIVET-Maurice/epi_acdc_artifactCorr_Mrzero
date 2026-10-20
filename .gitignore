@@ -1,0 +1,46 @@
+# Python environments and caches
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+# Local configuration and credentials
+.vscode/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Raw acquisitions, calibrations, reconstructed data and exports
+*.dat
+*.npz
+*.npy
+*.mat
+*.h5
+*.hdf5
+*.dcm
+*.nii
+*.nii.gz
+*.csv
+*.tsv
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.html
+*.log
+**/results*/
+**/pipeline_validation/
+**/simulation_metadata/
+**/acquisition_synthetic*/
+/acquisition_*/*
+!/acquisition_*/sequences/
+/acquisition_*/sequences/*
+!/acquisition_*/sequences/*.seq
+/tmp/
+/logs/
+.DS_Store
+Thumbs.db

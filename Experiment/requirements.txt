@@ -1,0 +1,13 @@
+# Python >= 3.11 (Pulseq 1.5 uses modern type annotations).
+numpy>=1.26,<3
+scipy>=1.11,<2
+matplotlib>=3.8,<4
+pydicom>=2.4,<4
+twixtools==0.24
+pypulseq==1.5.0.post1
+scikit-image>=0.24,<0.27
+nbformat>=5.10,<6
+nbclient>=0.10,<1
+ipykernel>=6.29,<8
+quadprog==0.1.13
+tqdm>=4.66,<5

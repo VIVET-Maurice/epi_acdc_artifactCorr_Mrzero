@@ -1,0 +1,9 @@
+# Keep notebook and Python diffs consistent across Windows/Linux.
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.ipynb text eol=lf
+*.seq -text
+*.m text eol=lf
+*.sh text eol=lf
+*.txt text eol=lf
