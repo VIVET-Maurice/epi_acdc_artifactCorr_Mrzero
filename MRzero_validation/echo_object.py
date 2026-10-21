@@ -244,10 +244,10 @@ def fit_echo_object(coil_images, echo_times_s, *, support_mask=None,
                   for key, value in pooled_fit.items()}
         pooled.update(voxel_count=int(pool.sum()), effective_voxel_count=float(pooled_effective_voxel_count),
                       mean_RSS_echoes=mean_amplitude.tolist(),
-                      assumption="Single exponential for ROI mean; heterogeneity and spatial-noise correlation are not inferred from three echoes.")
+                      assumption="Single exponential for ROI mean; heterogeneity and spatial-noise correlation are not inferred by this fit.")
     else:
         pooled = {"voxel_count": 0, "target_reliable_mask": False,
-                  "reason": "No finite positive native echo triplets in pooled ROI."}
+                  "reason": "No finite positive native echo trains in pooled ROI."}
     result["pooled"] = pooled
     result["report"] = {"native_image_shape": list(shape), "echo_times_s": times.tolist(),
         "echo_span_s": float(times[-1] - times[0]), "target_te_s": target,

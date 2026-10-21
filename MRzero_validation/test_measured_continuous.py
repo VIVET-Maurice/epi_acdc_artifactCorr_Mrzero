@@ -72,8 +72,8 @@ class MeasuredContinuousTests(unittest.TestCase):
         np.testing.assert_allclose(image, np.sqrt(np.sum(np.abs(expected)**2, axis=0)), atol=2e-14)
         self.assertEqual(report["method"], "row_separable")
 
-    def b0_fixture(self, path, polarity=-1):
-        ny, nx, ne, receivers = 4, 6, 3, 2
+    def b0_fixture(self, path, polarity=-1, echo_count=3):
+        ny, nx, ne, receivers = 4, 6, echo_count, 2
         acq = acquisition((ny, nx))
         acq["kx_mInv"] += np.arange(ny)[:, None] * .02
         phase_order = np.asarray([2, 0, 3, 1])
@@ -125,6 +125,36 @@ class MeasuredContinuousTests(unittest.TestCase):
             products = np.sum(raw["coil_images"][1:] * raw["coil_images"][:-1].conj(), axis=1)
             estimated = -np.angle(products) / (2 * np.pi * np.diff(te)[:, None, None])
             np.testing.assert_allclose(estimated, field_hz, atol=2e-12)
+
+    def test_thirty_two_echoes_preserve_phase_and_decay_with_echo_dependent_k_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "32echo.seq"
+            path.write_text("validated long echo train", encoding="utf-8")
+            raw, acq, _, sequence = self.b0_fixture(path, polarity=1, echo_count=32)
+            trajectory = sequence.calculate_kspace.return_value[0].reshape(3, 4, 32, 6)
+            te = .0021231 + np.arange(32) * .00182
+            images = (self.complex_values((2, 4, 6))[None]
+                      * np.exp(-(12. + 2j * np.pi * 73.) * te[:, None, None, None]))
+            x = (np.arange(6) - 3) * acq["FOV_m"][0] / 6
+            y = (np.arange(4) - 2) * acq["FOV_m"][1] / 4
+            X, Y = np.meshgrid(x, y)
+            for echo, offset in enumerate(np.linspace(0, .065, 32)):
+                trajectory[0, :, echo] += offset
+                kx = acq["kx_mInv"] + offset
+                cycles = (kx.reshape(-1, 1) * X.reshape(1, -1)
+                          + acq["ky_mInv"].reshape(-1, 1) * Y.reshape(1, -1))
+                # Independent forward encoding at the actual ADC positions.
+                raw["kspace"][echo] = (images[echo].reshape(2, -1)
+                    @ np.exp(-2j * np.pi * cycles).T).reshape(2, 4, 6)
+            with patch.dict("sys.modules", {"pypulseq": SimpleNamespace(Sequence=lambda: sequence)}):
+                reports = reconstruct_b0_echoes(raw, path)
+            self.assertEqual(len(reports), 32)
+            np.testing.assert_allclose(raw["coil_images"], images, atol=3e-14)
+            products = np.sum(raw["coil_images"][1:] * raw["coil_images"][:-1].conj(), axis=1)
+            field = -np.angle(products) / (2 * np.pi * np.diff(te)[:, None, None])
+            np.testing.assert_allclose(field, 73., atol=3e-12)
+            rate = -np.log(abs(raw["coil_images"][1:] / raw["coil_images"][:-1])) / np.diff(te)[:, None, None, None]
+            np.testing.assert_allclose(rate, 12., atol=4e-12)
 
     def test_missing_raw_data_and_unvalidated_b0_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "raw kspace"):

@@ -2,11 +2,13 @@
 
 from copy import deepcopy
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import torch
 
 from epi_twin import NativeEPITwin
+from native_resummation import RESUMMATION_ROUNDOFF, resum_native_points
 from twin_geometry import fft_origin_reverse
 
 
@@ -25,6 +27,17 @@ def fixture(multiple_rf=False):
            "phase_offset_rad": np.asarray([[.1, -.2, .3], [-.1, .4, -.3]]),
            "FOV_m": np.asarray([.1, .2])}
     return acq, X, Y, amplitude, b0, np.ones(X.shape, bool), rate
+
+
+def cancellation_twin():
+    """A uniform object has nearly cancelling peripheral Cartesian samples."""
+    positions = (np.arange(32) - 16) * .2 / 32
+    X, Y = np.meshgrid(positions, positions)
+    kx = np.asarray([[10., 50., 100., 150.]])
+    acq = {"kx_mInv": kx, "ky_mInv": np.full_like(kx, 50.),
+           "time_s": np.asarray([[.01, .0101, .0102, .0103]]),
+           "phase_offset_rad": np.asarray([[0., .3, .6, .9]]), "FOV_m": np.asarray([.2, .2])}
+    return NativeEPITwin(acq, X, Y, np.ones_like(X), np.zeros_like(X), np.ones_like(X, bool))
 
 
 def direct_oracle(acq, X, Y, amplitude, b0, support, rate, anchor, receive=None, b0_enabled=True):
@@ -50,6 +63,76 @@ def direct_oracle(acq, X, Y, amplitude, b0, support, rate, anchor, receive=None,
 
 
 class NativeEPITwinTests(unittest.TestCase):
+    def test_native_cancelling_spins_use_accurate_sum_and_bounded_roundoff(self):
+        twin = cancellation_twin()
+        execute = twin._mr0.execute_graph
+        captured = {}
+
+        def capture(*args, **kwargs):
+            signal, pathways = execute(*args, **kwargs)
+            captured["points"] = pathways[0][0].cpu().numpy()
+            return signal, pathways
+
+        with patch.object(twin._mr0, "execute_graph", side_effect=capture):
+            result = twin.simulate()
+        expected = captured["points"].sum(axis=1, dtype=np.complex128).astype(np.complex64)
+        np.testing.assert_array_equal(result["kdata"].reshape(-1), expected)
+        report = result["report"]
+        # The former relative-only gate fails on this real native simulation.
+        self.assertGreater(report["native_resummation_relative_error"], 5e-5)
+        self.assertLess(report["native_resummation_mass_relative_error"], RESUMMATION_ROUNDOFF)
+        self.assertLessEqual(report["native_resummation_max_tolerance_ratio"], 1.)
+
+    def test_corrupt_native_signal_is_rejected_even_when_spins_cancel(self):
+        twin = cancellation_twin()
+        execute = twin._mr0.execute_graph
+
+        def corrupt(*args, **kwargs):
+            signal, pathways = execute(*args, **kwargs)
+            signal = signal.clone()
+            signal[0, 0] += 1e-4 * pathways[0][0][0].abs().sum()
+            return signal, pathways
+
+        with patch.object(twin._mr0, "execute_graph", side_effect=corrupt):
+            with self.assertRaisesRegex(RuntimeError, "point resummation failed.*tolerance ratio"):
+                twin.simulate()
+
+    def test_nonfinite_native_signal_and_points_are_rejected(self):
+        for target in ["signal", "points"]:
+            with self.subTest(target=target):
+                twin = cancellation_twin()
+                execute = twin._mr0.execute_graph
+
+                def corrupt(*args, **kwargs):
+                    signal, pathways = execute(*args, **kwargs)
+                    if target == "signal":
+                        signal[0, 0] = complex(np.nan, 0)
+                    else:
+                        pathways[0][0][0, 0] = complex(np.inf, 0)
+                    return signal, pathways
+
+                with patch.object(twin._mr0, "execute_graph", side_effect=corrupt):
+                    with self.assertRaisesRegex(RuntimeError, "non-finite"):
+                        twin.simulate()
+
+    def test_dark_adc_error_is_not_hidden_by_a_bright_adc(self):
+        points = torch.tensor([[1., -1., 0.], [1e6, 1e6, 0.]], dtype=torch.complex64)
+        native = points.sum(dim=1)
+        native[0] = .001
+        # A block-relative check would miss this error next to the bright ADC.
+        self.assertLess(float(torch.linalg.vector_norm(points.sum(dim=1) - native)
+                              / torch.linalg.vector_norm(native)), 5e-5)
+        with self.assertRaisesRegex(RuntimeError, "tolerance ratio"):
+            resum_native_points(points, native)
+
+    def test_zero_points_do_not_admit_an_unscaled_absolute_error(self):
+        points = torch.zeros((2, 3), dtype=torch.complex64)
+        result, diagnostics = resum_native_points(points, torch.zeros(2, dtype=torch.complex64))
+        self.assertEqual(diagnostics["max_tolerance_ratio"], 0.)
+        self.assertTrue(bool(torch.all(result == 0)))
+        with self.assertRaisesRegex(RuntimeError, "point resummation failed"):
+            resum_native_points(points, torch.full((2,), 1e-20, dtype=torch.complex64))
+
     def test_native_negative_bloch_phase_and_nonzero_relaxation_anchor(self):
         acq, X, Y, amplitude, b0, support, rate = fixture()
         anchor = .004

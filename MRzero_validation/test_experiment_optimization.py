@@ -37,6 +37,10 @@ class LiveSnapshotTests(unittest.TestCase):
             mse = np.sum((np.abs(image) - np.abs(self.model.reference))**2) / reference_energy
             self.assertAlmostEqual(row["fval"], mse, places=11)
         self.assertAlmostEqual(solution["optimization_info"]["fval"], min(row["fval"] for row in snapshots), places=11)
+        self.assertEqual(solution["optimization_info"]["device"], str(self.model.device))
+        self.assertEqual(solution["optimization_info"]["precision"], str(self.model.dtype))
+        self.assertEqual(solution["optimization_info"]["native_baseline_cache"],
+                         self.model.runtime_info["native_baseline_cache"])
 
     def test_callback_arrays_cannot_modify_solver_state(self):
         arguments = dict(max_iterations=4, patience=20)

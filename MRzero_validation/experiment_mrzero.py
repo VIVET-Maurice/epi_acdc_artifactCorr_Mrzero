@@ -23,6 +23,8 @@ from time import perf_counter
 import numpy as np
 import torch
 
+from native_resummation import RESUMMATION_RTOL, RESUMMATION_ROUNDOFF, resum_native_points
+
 
 # Keep the original experiment readers, current model and numerical limits.
 EXPERIMENT_DIR = Path(__file__).resolve().parent.parent / "Experiment"
@@ -48,7 +50,7 @@ class MRzeroExperimentModel(ACDCModel):
 
     def __init__(self, experiment, calibration, max_current_A=3.0, *,
                  profile="auto", precision="auto", memory_fraction=0.5,
-                 sample_chunk=None):
+                 sample_chunk=None, require_cuda=False):
         import MRzeroCore as mr0
 
         self._mr0 = mr0
@@ -57,12 +59,14 @@ class MRzeroExperimentModel(ACDCModel):
         self._native_simulation_seconds = 0.0
         self._native_block_count = 0
         self._native_resummation_error = 0.0
+        self._native_resummation_mass_error = 0.0
+        self._native_resummation_tolerance_ratio = 0.0
         # The parent validates geometry, masks, acquisition order and current
         # timing before lazily calling our _make_base with those attributes.
         super().__init__(experiment, calibration, max_current_A,
                          profile=profile, precision=precision,
                          memory_fraction=memory_fraction,
-                         sample_chunk=sample_chunk)
+                         sample_chunk=sample_chunk, require_cuda=require_cuda)
         # With limited GPU memory the parent does not cache its baseline.
         # Prepare native blocks on the CPU once so iterations remain fast.
         if self._base_cache is None:
@@ -78,6 +82,10 @@ class MRzeroExperimentModel(ACDCModel):
             "native_cache_seconds": self._native_simulation_seconds,
             "native_blocks_simulated": self._native_block_count,
             "native_resummation_relative_error": self._native_resummation_error,
+            "native_resummation_mass_relative_error": self._native_resummation_mass_error,
+            "native_resummation_max_tolerance_ratio": self._native_resummation_tolerance_ratio,
+            "native_resummation_relative_tolerance": RESUMMATION_RTOL,
+            "native_resummation_roundoff_tolerance": RESUMMATION_ROUNDOFF,
             "native_baseline_cache": "GPU" if self._base_cache is not None else "CPU",
             "native_CPU_cache_MiB": sum(v.numel() * v.element_size()
                                         for v in self._native_cpu_blocks.values()) / 1024**2,
@@ -173,15 +181,13 @@ class MRzeroExperimentModel(ACDCModel):
         # Native ADC magnetization includes proton density and receiver phase.
         # Apply receive sensitivity once, before summing individual object points.
         magnetization = pathways[0][0].detach() * phantom.coil_sens[0][None, :]
-        resummed = magnetization.sum(dim=1)
         native = signal[:, 0].detach()
-        scale = torch.linalg.vector_norm(native).clamp_min(torch.finfo(torch.float32).tiny)
-        error = float(torch.linalg.vector_norm(resummed - native) / scale)
-        self._native_resummation_error = max(self._native_resummation_error, error)
-        if not np.isfinite(error) or error > 5e-5:
-            raise RuntimeError(f"Native MRzero receive resummation differs from its ADC signal ({error:.3g}).")
-        if not bool(torch.isfinite(magnetization).all()):
-            raise ValueError("MRzero returned nonfinite voxel magnetization.")
+        _, diagnostics = resum_native_points(magnetization, native)
+        self._native_resummation_error = max(self._native_resummation_error, diagnostics["relative_error"])
+        self._native_resummation_mass_error = max(
+            self._native_resummation_mass_error, diagnostics["mass_relative_error"])
+        self._native_resummation_tolerance_ratio = max(
+            self._native_resummation_tolerance_ratio, diagnostics["max_tolerance_ratio"])
         inverse = torch.as_tensor(np.argsort(order), device=self.device)
         return magnetization.index_select(0, inverse).T.to(self.complex_dtype)
 

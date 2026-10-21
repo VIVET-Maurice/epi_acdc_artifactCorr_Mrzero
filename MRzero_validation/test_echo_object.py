@@ -27,6 +27,37 @@ def echoes(amplitude=100., rate=25., *, shape=(12, 10), receivers=3,
 
 
 class EchoObjectTests(unittest.TestCase):
+    def test_thirty_two_echoes_recover_native_relaxation_and_reduce_target_uncertainty(self):
+        times = .0021231 + np.arange(32) * .00182
+        row, column = np.indices((8, 8))
+        rate = 15. + row + column
+        amplitude = 100. + row * 2 + column
+        sensitivity = np.exp(1j * np.arange(4) * .7) / 2
+        signal = (amplitude[None, None] * sensitivity[None, :, None, None]
+                  * np.exp(-times[:, None, None, None] * rate[None, None]))
+        result = fit_echo_object(signal, times, noise_std=1e-5, target_te_s=.0780575)
+        np.testing.assert_allclose(result['R2star_sInv'], rate, atol=1e-8)
+        np.testing.assert_allclose(result['effective_amplitude_TE0'], amplitude, rtol=1e-10)
+        self.assertTrue(result['target_reliable_mask'].all())
+        # Equal known receiver noise: the longer measured train must improve
+        # uncertainty at the same EPI TE, without assuming independent voxels.
+        short = fit_echo_object(signal[:3], times[:3], noise_std=1., target_te_s=.0780575)
+        long = fit_echo_object(signal, times, noise_std=1., target_te_s=.0780575)
+        self.assertTrue(np.all(long['target_log_std'] < short['target_log_std']))
+        self.assertEqual(len(result['echo_times_s']), 32)
+
+    def test_thirty_two_echoes_with_unusable_late_signal_keep_explicit_fallback(self):
+        times = .0021231 + np.arange(32) * .00182
+        sensitivity = np.exp(1j * np.arange(4) * .7) / 2
+        signal = (30. * sensitivity[None, :, None, None]
+                  * np.exp(-80. * times[:, None, None, None]))
+        signal = np.broadcast_to(signal, (32, 4, 4, 4)).copy()
+        result = fit_echo_object(signal, times, noise_std=1., target_te_s=.0780575)
+        self.assertFalse(result['target_reliable_mask'].any())
+        np.testing.assert_array_equal(result['simulation_R2star_sInv'], 0.)
+        np.testing.assert_array_equal(result['simulation_amplitude_at_reference'],
+                                      result['first_echo_amplitude'])
+
     def test_recovers_known_effective_amplitude_and_rate_at_native_positions(self):
         row, column = np.indices((12, 10))
         amplitude = 100 + row + 2 * column

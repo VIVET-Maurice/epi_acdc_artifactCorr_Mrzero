@@ -8,13 +8,15 @@ The small fixtures run on CPU; CUDA parity runs when CUDA is available.
 from copy import deepcopy
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from acdc_gpu import ACDCModel, optimize_image, project_currents_tensor, response_matrices
+from acdc_gpu import ACDCModel, optimize_image, project_currents_tensor, response_matrices, select_device
 from acdc_gpu_field import solve_field_gpu
 
 torch.set_num_threads(1)
@@ -346,6 +348,112 @@ class ConstraintsAndOptimizationTests(unittest.TestCase):
         self.assertFalse(diagnostics["actual_adc_field_limits_met"])
         self.assertGreater(diagnostics["maximum_actual_quality_field_Hz"], 10.)
         self.assertTrue(diagnostics["actual_adc_channel_limits_met"])
+
+
+class DeviceSelectionTests(unittest.TestCase):
+    """Exercise CUDA failures without requiring a GPU on the test machine."""
+
+    def setUp(self):
+        probe = torch.ones((2, 2))
+        patches = {
+            "available": patch.object(torch.cuda, "is_available", return_value=True),
+            "properties": patch.object(torch.cuda, "get_device_properties", return_value=SimpleNamespace(
+                name="Test GPU", major=12, minor=0, total_memory=16 * 1024**3)),
+            "architectures": patch.object(torch.cuda, "get_arch_list", return_value=["sm_70", "sm_75"]),
+            "probe": patch.object(torch, "ones", return_value=probe),
+            "synchronize": patch.object(torch.cuda, "synchronize"),
+        }
+        self.mocks = {}
+        for name, patcher in patches.items():
+            self.mocks[name] = patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_auto_requires_working_cuda_kernels_before_selecting_gpu(self):
+        device, dtype, info = select_device()
+        self.assertEqual(str(device), "cuda")
+        self.assertEqual(dtype, torch.float32)
+        self.assertEqual(info["gpu_name"], "Test GPU")
+        self.assertIsNone(info["cpu_fallback_reason"])
+        self.mocks["synchronize"].assert_called_once()
+
+    def test_auto_incompatible_build_warns_and_uses_cpu_defaults(self):
+        self.mocks["probe"].side_effect = RuntimeError(
+            "CUDA error: no kernel image is available for execution on the device")
+        with self.assertWarnsRegex(RuntimeWarning, "Falling back to CPU"):
+            device, dtype, info = select_device()
+        self.assertEqual(str(device), "cpu")
+        self.assertEqual(dtype, torch.float64)
+        self.assertEqual(info["precision"], "float64")
+        self.assertEqual(info["gpu_name"], "CPU")
+        self.assertIsNone(info["memory_GiB"])
+        self.assertEqual(info["detected_gpu_name"], "Test GPU")
+        self.assertEqual(info["gpu_capability"], "sm_120")
+        self.assertEqual(info["cuda_build_architectures"], ["sm_70", "sm_75"])
+        self.assertIn("no kernel image", info["cpu_fallback_reason"])
+
+    def test_auto_synchronization_failure_preserves_explicit_precision(self):
+        self.mocks["synchronize"].side_effect = RuntimeError("CUDA error: invalid device function")
+        with self.assertWarns(RuntimeWarning):
+            device, dtype, info = select_device(precision="float32")
+        self.assertEqual(str(device), "cpu")
+        self.assertEqual(dtype, torch.float32)
+        self.assertIn("invalid device function", info["cpu_fallback_reason"])
+
+    def test_explicit_gpu_profiles_raise_with_compatibility_diagnostics(self):
+        failure = RuntimeError("CUDA error: no kernel image is available for execution on the device")
+        self.mocks["probe"].side_effect = failure
+        for profile in ("v100", "gtx1660ti", "blackwell"):
+            with self.subTest(profile=profile), self.assertRaisesRegex(RuntimeError, "Test GPU.*sm_120") as raised:
+                select_device(profile)
+            self.assertIs(raised.exception.__cause__, failure)
+            self.assertIn("sm_70, sm_75", str(raised.exception))
+            self.assertIn("restart the kernel", str(raised.exception))
+
+    def test_cpu_profile_never_probes_cuda(self):
+        device, dtype, _ = select_device("cpu")
+        self.assertEqual(str(device), "cpu")
+        self.assertEqual(dtype, torch.float64)
+        self.mocks["available"].assert_not_called()
+        self.mocks["properties"].assert_not_called()
+        self.mocks["probe"].assert_not_called()
+
+    def test_unavailable_cuda_uses_cpu_only_for_auto(self):
+        self.mocks["available"].return_value = False
+        device, dtype, _ = select_device()
+        self.assertEqual(str(device), "cpu")
+        self.assertEqual(dtype, torch.float64)
+        with self.assertRaisesRegex(RuntimeError, "CUDA is unavailable"):
+            select_device("v100")
+        self.mocks["probe"].assert_not_called()
+
+    def test_required_cuda_never_falls_back_after_incompatible_kernel(self):
+        failure = RuntimeError("CUDA error: no kernel image is available for execution on the device")
+        self.mocks["probe"].side_effect = failure
+        with self.assertRaisesRegex(RuntimeError, "Test GPU.*sm_120") as raised:
+            select_device("auto", require_cuda=True)
+        self.assertIs(raised.exception.__cause__, failure)
+
+    def test_required_cuda_rejects_missing_gpu_and_explicit_cpu(self):
+        self.mocks["available"].return_value = False
+        with self.assertRaisesRegex(RuntimeError, "this run requires a GPU"):
+            select_device("auto", require_cuda=True)
+        with self.assertRaisesRegex(ValueError, "conflicts"):
+            select_device("cpu", require_cuda=True)
+        with self.assertRaisesRegex(ValueError, "boolean"):
+            select_device(require_cuda="yes")
+        self.mocks["probe"].assert_not_called()
+
+    def test_required_auto_accepts_each_supported_gpu_architecture(self):
+        for name, major, minor in (("Tesla V100", 7, 0), ("GTX 1660 Ti", 7, 5),
+                                   ("NVIDIA RTX PRO 6000 Blackwell", 12, 0)):
+            with self.subTest(name=name):
+                self.mocks["properties"].return_value = SimpleNamespace(
+                    name=name, major=major, minor=minor, total_memory=16 * 1024**3)
+                device, dtype, info = select_device("auto", require_cuda=True)
+                self.assertEqual(device.type, "cuda")
+                self.assertEqual(dtype, torch.float32)
+                self.assertTrue(info["require_cuda"])
+                self.assertEqual(info["gpu_name"], name)
 
 
 class ValidationTests(unittest.TestCase):

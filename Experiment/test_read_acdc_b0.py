@@ -16,16 +16,16 @@ ROOT = Path(__file__).resolve().parent.parent
 TE = np.asarray([.002, .004, .006])
 
 
-def coil_images(field, magnitude=None):
+def coil_images(field, magnitude=None, echo_times=TE):
     """Independent signal oracle with deliberately cancelling receiver phases."""
     if magnitude is None:
         magnitude = np.ones_like(field)
     sensitivity = np.asarray([1, 2j, -.7, -.4j])[:, None, None]
     return (sensitivity[None] * magnitude[None, None]
-            * np.exp(-2j * np.pi * TE[:, None, None, None] * field[None, None]))
+            * np.exp(-2j * np.pi * np.asarray(echo_times)[:, None, None, None] * field[None, None]))
 
 
-def fake_twix(images):
+def fake_twix(images, echo_times=TE):
     ne, channels, ny, nx = images.shape
     axes = (2, 3)
     k = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(images, axes=axes), axes=axes), axes=axes)
@@ -40,7 +40,7 @@ def fake_twix(images):
                 is_image_scan=lambda: True, is_flag_set=lambda flag: False,
                 mdh=SimpleNamespace(CenterCol=nx // 2, CenterLin=ny // 2, SliceData=geometry)))
     header = {"sKSpace": {"lBaseResolution": nx, "lPhaseEncodingLines": ny},
-              "alTE": (TE * 1e6).tolist(), "alTR": [10000], "sRXSPEC": {"alDwellTime": [10000]},
+              "alTE": (np.asarray(echo_times) * 1e6).tolist(), "alTR": [10000], "sRXSPEC": {"alDwellTime": [10000]},
               "sSliceArray": {"asSlice": [{"dReadoutFOV": 200, "dPhaseFOV": 160, "dThickness": 5}]}}
     return [{"mdb": lines, "hdr": {"MeasYaps": header}}]
 
@@ -112,6 +112,54 @@ class B0PhaseTests(unittest.TestCase):
             b0_from_coil_images(images, [.002, .004, .007])
         with self.assertRaisesRegex(ValueError, "No reliable"):
             b0_from_coil_images(images * 0, TE)
+
+
+class B0SequenceGridTests(unittest.TestCase):
+    def sequence_fixture(self, echo_drift_samples=.013):
+        ny, nx, ne = 4, 8, 32
+        dx, dy, dwell = 5., 5., 7.8e-6
+        centers = .001 + np.arange(ny) * .065
+        rf = [{"center": center, "end": center + .0002, "phase": 0.} for center in centers]
+        adc = [{"samples": nx, "dwell": dwell, "phase": 0.} for _ in range(ny * ne)]
+        echo_times = .0021231 + np.arange(ne) * .00182
+        offsets = np.linspace(0, echo_drift_samples, ne) * dx
+        trajectory = np.zeros((3, ny, ne, nx))
+        trajectory[0] = (np.arange(nx) - nx // 2) * dx + offsets[:, None]
+        trajectory[1] = ((np.arange(ny) - ny // 2) * dy)[:, None, None]
+        times = (centers[:, None, None] + echo_times[None, :, None]
+                 + (np.arange(nx) - nx // 2)[None, None, :] * dwell)
+        sequence = SimpleNamespace(
+            read=lambda path: None, definitions={"Matrix": [nx, ny], "TE": echo_times},
+            calculate_kspace=lambda: (trajectory.reshape(3, -1), None, centers, [], times.reshape(-1)))
+        return sequence, rf, adc, trajectory
+
+    def read_fixture(self, sequence, rf, adc):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "synthetic.seq"
+            path.write_text("synthetic ADC fixture", encoding="utf-8")
+            with patch("pypulseq.Sequence", return_value=sequence):
+                with patch("read_acdc_b0._events", return_value=(rf, adc, .26)):
+                    return read_b0_sequence(path)
+
+    def test_long_echo_train_accepts_small_constant_echo_shifts_without_rounding_te(self):
+        sequence, rf, adc, _ = self.sequence_fixture()
+        result = self.read_fixture(sequence, rf, adc)
+        self.assertEqual(result["echo_count"], 32)
+        # An independent zero-crossing calculation: positive k offset crosses
+        # the origin earlier by offset / step * dwell.
+        expected_te = .0021231 + np.arange(32) * .00182 - np.linspace(0, .013, 32) * 7.8e-6
+        np.testing.assert_allclose(result["TE_s"], expected_te, atol=1e-14)
+
+    def test_long_train_does_not_allow_large_offsets_or_nonuniform_sampling(self):
+        with self.subTest(defect="large echo offset"):
+            sequence, rf, adc, _ = self.sequence_fixture(echo_drift_samples=.05)
+            with self.assertRaisesRegex(ValueError, "uniform Cartesian"):
+                self.read_fixture(sequence, rf, adc)
+        with self.subTest(defect="nonuniform readout"):
+            sequence, rf, adc, trajectory = self.sequence_fixture()
+            trajectory[0, :, :, 1] += .05
+            with self.assertRaisesRegex(ValueError, "uniform Cartesian"):
+                self.read_fixture(sequence, rf, adc)
 
 
 class B0TwixTests(unittest.TestCase):
@@ -186,9 +234,29 @@ class B0TwixTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "TE_s disagrees"):
                     read_b0_twix(self.path, Path("synthetic.seq"))
 
+    def test_three_echo_twix_is_not_relabelled_as_thirty_two_echoes(self):
+        info = {"image_shape": [12, 16], "echo_count": 32}
+        with patch("read_acdc_b0.read_b0_sequence", return_value=info):
+            with patch("twixtools.read_twix", return_value=self.scans):
+                with self.assertRaisesRegex(ValueError, "echo_count.*expected 32, found 3"):
+                    read_b0_coil_images(self.path, Path("32echo.seq"))
+
+    def test_thirty_two_echo_twix_preserves_echo_order_and_known_field(self):
+        echo_times = .0021231 + np.arange(32) * .00182
+        expected = coil_images(self.field, echo_times=echo_times)
+        scans = fake_twix(expected, echo_times=echo_times)
+        with patch("twixtools.read_twix", return_value=scans):
+            echoes = read_b0_coil_images(self.path)
+        self.assertEqual(echoes["coil_images"].shape, (32, 4, 12, 16))
+        np.testing.assert_allclose(echoes["coil_images"], expected, atol=1e-12)
+        result = b0_from_coil_images(echoes["coil_images"], echoes["metadata"]["TE_s"])
+        np.testing.assert_allclose(result["b0Hz"], self.field, atol=1e-10)
+
     def test_supplied_real_b0_sequence_uses_actual_adc_not_stale_echo_samples(self):
-        path = ROOT / "Experiment/sequence/megre_b0_128x128_fov200mm_3echo.seq"
-        if not path.exists():
+        candidates = [ROOT / "Experiment/sequence/megre_b0_128x128_fov200mm_3echo.seq",
+                      ROOT / "acquisition_019/sequences/b0_map.seq"]
+        path = next((candidate for candidate in candidates if candidate.exists()), None)
+        if path is None:
             self.skipTest("Local acquisition is not installed")
         result = read_b0_sequence(path)
         self.assertEqual(result["matrix_size"], [128, 128])
@@ -196,6 +264,24 @@ class B0TwixTests(unittest.TestCase):
         self.assertEqual(result["dummy_rf_count"], 32)
         np.testing.assert_allclose(result["TE_s"], [.0021231, .0039431, .0057631], atol=1e-8)
         np.testing.assert_allclose(result["FOV_m"], [.2, .2], atol=1e-6)
+
+    def test_supplied_thirty_two_echo_sequence_retains_actual_timing_and_grid_drift(self):
+        path = ROOT / "acquisition_019/sequences/megre_b0_s0_t2star_128x128_fov200mm_32echo.seq"
+        if not path.exists():
+            self.skipTest("Local 32-echo sequence is not installed")
+        result = read_b0_sequence(path)
+        self.assertEqual(result["matrix_size"], [128, 128])
+        self.assertEqual(result["echo_count"], 32)
+        self.assertEqual(result["dummy_rf_count"], 32)
+        self.assertEqual(result["polarity"], 1)
+        self.assertAlmostEqual(result["dwell_s"], 7.8e-6)
+        self.assertAlmostEqual(result["TR_s"], .06197)
+        self.assertAlmostEqual(result["sequence_duration_s"], 9.9152)
+        # Zero-k crossing differs slightly from the rounded TE definitions.
+        np.testing.assert_allclose(result["TE_s"], .0021231 + np.arange(32) * .00182, atol=1.6e-7)
+        np.testing.assert_allclose(result["FOV_m"], [.2, .2], atol=1e-6)
+        self.assertGreater(result["echo_readout_center_error_samples"][-1], .012)
+        self.assertLess(result["echo_readout_center_error_samples"][-1], .014)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,40 @@
 # Dynamic ACDC shimming with MRzero
 
+### 06 — cartographie 32 échos et correction bruit/support
+
+[06_acdc_echo32_b0_s0_t2star_MRzero.ipynb](06_acdc_echo32_b0_s0_t2star_MRzero.ipynb)
+reprend le 05 avec `megre_b0_s0_t2star_128x128_fov200mm_32echo.seq` pour la
+cartographie B0/relaxation. La séquence EPI à corriger reste sélectionnée séparément.
+Les événements de la nouvelle cartographie donnent 32 échos monopolaire 128²,
+de 2,123 à 58,543 ms, TR 61,97 ms et durée 9,9152 s. La définition accessoire
+`EchoSamples=64` est périmée ; les ADC réels contiennent 128 points. Le lecteur
+conserve les petits décalages de kx par écho et les TE réels lors de la
+reconstruction complexe.
+
+Renseigner `B0_SCAN_PATH` avec le Twix acquis avec cette séquence (chemin relatif
+à `INPUT_DIR`, ou absolu). `None` sélectionne un unique `*b0_map.dat`, puis vérifie
+sa compatibilité ; le fichier historique trois échos est explicitement refusé
+avec la séquence 32. Les six premiers échos servent par défaut au B0
+(`B0_FIELD_ECHO_COUNT`), tous les 32 restent disponibles pour R2*.
+
+`prepare_echo_object` estime le bruit dans des coins indépendants du seuil objet,
+ou dans un `noise_mask` explicitement fourni. La covariance complexe débiaise
+le RSS avant le support SNR ; les petites composantes et les trous sans signal
+ne sont plus absorbés par un remplissage global. Un contrôle de moyenne complexe
+signale certains fonds contaminés ; les régions de bruit doivent aussi être
+inspectées sur les figures. Le notebook demande une calibration du bruit par
+défaut et utilise les taux locaux acceptés (`RATE_MODE="guarded"`). Les API du 05
+restent compatibles et bénéficient aussi du correctif de bruit/support.
+
+Le précontrôle affiche l'extrapolation vers le TE EPI (environ 19,5 ms au-delà
+du dernier écho pour l'EPI actuelle), et vers le dernier ADC, plus tardif.
+Les critères de fiabilité de relaxation restent actifs, notamment le SNR à
+tous les échos ; un signal tardif insuffisant peut encore donner un repli
+explicite sans décroissance. L'amplitude est une amplitude GRE effective,
+pas une mesure indépendante de PD/T1 ou du B0 à travers la coupe.
+Les masques, covariance, diagnostics de fit et paramètres sont sauvegardés sous
+`results_experiment_echo32/mrzero06_*`, avec le reste du pipeline du 05.
+
 Two sub-spin extensions of notebook 04 are available:
 
 - [04_acdc_hardware_continuous_MRzero_V2.ipynb](04_acdc_hardware_continuous_MRzero_V2.ipynb)

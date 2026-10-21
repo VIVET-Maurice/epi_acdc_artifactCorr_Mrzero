@@ -8,16 +8,19 @@ Its variables are DAC commands, not the filtered physical currents.
 from __future__ import annotations
 
 import time
+import warnings
 
 import numpy as np
 import torch
 
 
-def select_device(profile="auto", precision="auto"):
+def select_device(profile="auto", precision="auto", *, require_cuda=False):
     """Return a device, real dtype and a small, printable settings report.
 
     A profile selects the computer, not a different physical model. Float32 is
     the fast GPU default; float64 is available on every profile for comparison.
+    Auto falls back to CPU if the CUDA execution test fails, with a warning.
+    ``require_cuda=True`` keeps automatic GPU selection but forbids CPU fallback.
     Explicit GPU profiles raise an error when CUDA cannot execute a small test.
     """
     profiles = {"auto", "v100", "gtx1660ti", "blackwell", "cpu"}
@@ -25,30 +28,57 @@ def select_device(profile="auto", precision="auto"):
         raise ValueError(f"profile must be one of {sorted(profiles)}.")
     if precision not in {"auto", "float32", "float64"}:
         raise ValueError("precision must be auto, float32 or float64.")
+    if not isinstance(require_cuda, bool):
+        raise ValueError("require_cuda must be boolean.")
+    if require_cuda and profile == "cpu":
+        raise ValueError("profile='cpu' conflicts with require_cuda=True.")
     use_cuda = profile != "cpu" and torch.cuda.is_available()
-    if profile not in {"auto", "cpu"} and not use_cuda:
-        raise RuntimeError("CUDA is unavailable. Install a compatible PyTorch/CUDA build, or choose profile='cpu'.")
-    device = torch.device("cuda" if use_cuda else "cpu")
-    precision = ("float32" if use_cuda else "float64") if precision == "auto" else precision
-    dtype = getattr(torch, precision)
+    if (require_cuda or profile not in {"auto", "cpu"}) and not use_cuda:
+        raise RuntimeError("CUDA is unavailable; this run requires a GPU. Check the notebook's Python environment, "
+                           "GPU allocation and NVIDIA driver; install a compatible PyTorch/CUDA build "
+                           "(see docs/SERVER_SETUP.md), then restart the kernel.")
+    fallback_reason = None
+    detected_gpu, capability, architectures = None, None, []
     if use_cuda:
         # Keep full float32 mantissas for phase accumulation; no TF32/FP16.
         torch.backends.cuda.matmul.allow_tf32 = False
+        properties = torch.cuda.get_device_properties(torch.device("cuda"))
+        detected_gpu = properties.name
+        capability = f"sm_{properties.major}{properties.minor}"
+        architectures = torch.cuda.get_arch_list()
+        probe_dtype = torch.float32 if precision == "auto" else getattr(torch, precision)
         try:
-            probe = torch.ones((2, 2), device=device, dtype=dtype)
+            # CUDA availability alone does not establish kernel compatibility.
+            probe = torch.ones((2, 2), device="cuda", dtype=probe_dtype)
             _ = probe @ probe
             torch.cuda.synchronize()
         except RuntimeError as error:
-            raise RuntimeError("The installed PyTorch CUDA build cannot run on this GPU. Choose its compatible build or profile='cpu'.") from error
-        properties = torch.cuda.get_device_properties(device)
-        name = properties.name
-        memory_gib = properties.total_memory / 1024**3
-    else:
-        name, memory_gib = "CPU", None
+            fallback_reason = (
+                f"CUDA execution test failed on {detected_gpu} ({capability}) with "
+                f"PyTorch {torch.__version__}, CUDA runtime {torch.version.cuda}; "
+                f"build architectures: {', '.join(architectures) or 'unknown'}. "
+                f"Original error: {error}"
+            )
+            guidance = ("Install a PyTorch CUDA build compatible with this GPU in the notebook's "
+                        "Python environment (see docs/SERVER_SETUP.md), then restart the kernel. "
+                        "GPU profile names do not change the installed build.")
+            if require_cuda or profile != "auto":
+                raise RuntimeError(f"{fallback_reason}\n{guidance} "
+                                   "For an explicit CPU run, set require_cuda=False and profile='cpu'.") from error
+            warnings.warn(f"{fallback_reason}\nFalling back to CPU because profile='auto'; "
+                          f"this may be slower. {guidance}", RuntimeWarning, stacklevel=2)
+            use_cuda = False
+    device = torch.device("cuda" if use_cuda else "cpu")
+    precision = ("float32" if use_cuda else "float64") if precision == "auto" else precision
+    dtype = getattr(torch, precision)
+    name = detected_gpu if use_cuda else "CPU"
+    memory_gib = properties.total_memory / 1024**3 if use_cuda else None
     info = {"profile": profile, "device": str(device), "gpu_name": name,
             "precision": precision, "memory_GiB": memory_gib,
             "torch_version": torch.__version__, "cuda_runtime": torch.version.cuda,
-            "tf32": False, "mixed_precision": False}
+            "detected_gpu_name": detected_gpu, "gpu_capability": capability,
+            "cuda_build_architectures": architectures, "cpu_fallback_reason": fallback_reason,
+            "require_cuda": require_cuda, "tf32": False, "mixed_precision": False}
     return device, dtype, info
 
 
@@ -168,8 +198,8 @@ class ACDCModel:
     """
 
     def __init__(self, experiment, calibration, max_current_A=3.0, *, profile="auto",
-                 precision="auto", memory_fraction=0.5, sample_chunk=None):
-        self.device, self.dtype, self.runtime_info = select_device(profile, precision)
+                 precision="auto", memory_fraction=0.5, sample_chunk=None, require_cuda=False):
+        self.device, self.dtype, self.runtime_info = select_device(profile, precision, require_cuda=require_cuda)
         self.complex_dtype = torch.complex128 if self.dtype == torch.float64 else torch.complex64
         if not 0 < memory_fraction <= 0.8:
             raise ValueError("memory_fraction must be in (0, 0.8].")

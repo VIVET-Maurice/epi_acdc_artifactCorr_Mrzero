@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from continuous_reconstruction import ContinuousReconstruction
+from native_resummation import RESUMMATION_RTOL, RESUMMATION_ROUNDOFF, resum_native_points
 
 
 class NativeEPITwin:
@@ -168,14 +169,18 @@ class NativeEPITwin:
             raise RuntimeError("Expected one transverse pathway after an ideal excitation.")
         point_mag = pathways[0][0].detach()
         native = signal[:, 0].detach()
-        error = torch.linalg.vector_norm(point_mag.sum(dim=1) - native)
-        scale = torch.linalg.vector_norm(native).clamp_min(torch.finfo(torch.float32).tiny)
-        relative_error = float(error / scale)
-        if not np.isfinite(relative_error) or relative_error > 5e-5:
-            raise RuntimeError(f"Native MRzero point resummation failed ({relative_error:.3g}).")
-        receiver_signal = self._receive @ point_mag.T
+        resummed, diagnostics = resum_native_points(point_mag, native)
+        # Sum in double precision without retaining a double point block.
+        # The one uniform receiver uses the already computed validation sum.
+        if self.nreceivers == 1 and bool(torch.all(self._receive == 1)):
+            receiver_signal = resummed[None].to(torch.complex64)
+        else:
+            receiver_signal = torch.stack([
+                (point_mag * weights[None]).sum(dim=1, dtype=torch.complex128)
+                for weights in self._receive
+            ]).to(torch.complex64)
         inverse = torch.as_tensor(np.argsort(order), device=self.device)
-        return receiver_signal.index_select(1, inverse), relative_error
+        return receiver_signal.index_select(1, inverse), diagnostics
 
     @torch.no_grad()
     def simulate(self, b0_enabled=True):
@@ -185,16 +190,18 @@ class NativeEPITwin:
         started = perf_counter()
         phantom = self._phantom(b0_enabled)
         signal = torch.empty((self.nreceivers, self.nsamples), device=self.device, dtype=torch.complex64)
-        maximum_error, blocks = 0., 0
+        maxima = {"relative_error": 0., "mass_relative_error": 0., "max_tolerance_ratio": 0.}
+        blocks = 0
         for first in range(0, self.nsamples, self.sample_chunk):
             indices = np.arange(first, min(first + self.sample_chunk, self.nsamples))
             rf = self._acquisition["rf_time_s"][indices]
             for center in np.unique(rf):
                 selected = indices[rf == center]
-                values, error = self._simulate_history(selected, phantom)
+                values, diagnostics = self._simulate_history(selected, phantom)
                 destinations = torch.as_tensor(selected, device=self.device)
                 signal.index_copy_(1, destinations, values)
-                maximum_error = max(maximum_error, error)
+                for name, error in diagnostics.items():
+                    maxima[name] = max(maxima[name], error)
                 blocks += 1
         kdata = signal.reshape((self.nreceivers,) + self.image_shape)
         coil_images = self.reconstruction.image(kdata)
@@ -207,7 +214,12 @@ class NativeEPITwin:
             "object_shape": list(self.object_shape), "active_points": int(self.support.sum()),
             "image_shape": list(self.image_shape), "receivers": int(self.nreceivers),
             "sample_chunk": self.sample_chunk, "native_blocks_simulated": blocks,
-            "native_resummation_relative_error": maximum_error,
+            "native_resummation_relative_error": maxima["relative_error"],
+            "native_resummation_mass_relative_error": maxima["mass_relative_error"],
+            "native_resummation_max_tolerance_ratio": maxima["max_tolerance_ratio"],
+            "native_resummation_relative_tolerance": RESUMMATION_RTOL,
+            "native_resummation_roundoff_tolerance": RESUMMATION_ROUNDOFF,
+            "receiver_accumulation": "complex128, returned as complex64",
             "amplitude_reference_time_s": self.anchor_s,
             "point_magnetization_cache": False,
             "native_point_block_MiB": int(self.support.sum()) * min(self.sample_chunk, self.nsamples) * 8 / 1024**2,

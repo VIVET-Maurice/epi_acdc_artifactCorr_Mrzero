@@ -2,13 +2,17 @@
 
 from copy import deepcopy
 from pathlib import Path
+import json
 import sys
+from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'Experiment'))
-from twin_inputs import build_candidates, frame_acquisition, model_arguments, prepare_echo_object
+from twin_inputs import (build_candidates, frame_acquisition, model_arguments,
+                         prepare_echo_object, read_twin_inputs)
 
 
 def candidate_fixture():
@@ -207,6 +211,142 @@ class TwinInputTests(unittest.TestCase):
             np.testing.assert_array_equal(fit[key], reference[key])
         with self.assertRaisesRegex(ValueError, 'finite background samples'):
             prepare_echo_object(inputs, background_corner_m=.2, allow_uncalibrated_noise=False)
+
+    def test_32_receiver_RSS_floor_does_not_consume_noise_corners_or_object_support(self):
+        rng = np.random.default_rng(781)
+        x = (np.arange(64) - 32) * .2 / 64
+        X, Y = np.meshgrid(x, x)
+        object_mask = ((X + .025)**2 + Y**2 < .03**2) | ((X - .045)**2 + Y**2 < .012**2)
+        object_mask[32, 24] = False  # A measured empty hole must remain empty.
+        times = np.array([.002, .004, .006])
+        weights = np.exp(1j * np.arange(32)) / np.sqrt(32)
+        coils = np.exp(-12 * times[:, None, None, None]) * weights[None, :, None, None] * object_mask
+        noise = .04 * (rng.normal(size=coils.shape) + 1j * rng.normal(size=coils.shape))
+        # Correlated proper-complex noise must retain its off-diagonal covariance.
+        noise[:, 1] += .3j * noise[:, 0]
+        coils += noise
+        coils[:, 0, 12, 32] += 3.  # Isolated coherent pixel: remove small component.
+        inputs = dict(b0_raw=dict(coil_images=coils, X_m=X, Y_m=Y),
+            field=dict(mask=np.ones(X.shape, bool), b0Hz=np.zeros(X.shape)),
+            acquisition=dict(TE_s=.078), echo_times_s=times)
+        fit = prepare_echo_object(inputs, allow_uncalibrated_noise=False)
+        report = fit['report']
+        self.assertGreater(report['support']['raw_RSS_threshold_voxels'], .99 * X.size)
+        self.assertTrue(report['noise']['calibrated'])
+        self.assertGreaterEqual(report['noise']['available_sample_count'], 64)
+        self.assertTrue(report['support']['SNR_used'])
+        self.assertEqual(report['support']['support_noise_overlap_voxels'], 0)
+        self.assertEqual(np.count_nonzero(fit['object_support'] & ~object_mask), 0)
+        self.assertGreater(np.count_nonzero(fit['object_support'] & object_mask), .95 * object_mask.sum())
+        self.assertFalse(fit['object_support'][32, 24])
+        self.assertFalse(fit['object_support'][12, 32])
+        self.assertEqual(report['support']['retained_component_count'], 2)
+        self.assertGreater(report['support']['removed_small_component_voxels'], 0)
+        self.assertGreater(abs(fit['noise_covariance'][0, 1].imag), .0005)
+        self.assertLess(fit['first_echo_amplitude'][object_mask].mean(),
+                        fit['raw_RSS'][0][object_mask].mean())
+
+    def test_small_holes_need_measured_SNR_and_optional_relative_threshold_can_be_disabled(self):
+        inputs = self.noise_fixture(noise_std=.005)
+        coils = inputs['b0_raw']['coil_images']
+        coils[:, :, 16, 16] *= .1  # Still well above noise but below relative threshold.
+        fit = prepare_echo_object(inputs, threshold_fraction=.2)
+        self.assertTrue(fit['object_support'][16, 16])
+        self.assertGreater(fit['report']['support']['added_hole_voxels'], 0)
+        disabled = prepare_echo_object(inputs, threshold_fraction=.2, max_hole_voxels=0)
+        self.assertFalse(disabled['object_support'][16, 16])
+        no_relative_threshold = prepare_echo_object(inputs, threshold_fraction=None)
+        self.assertTrue(no_relative_threshold['object_support'][16, 16])
+        self.assertIsNone(no_relative_threshold['report']['support']['relative_threshold_fraction'])
+
+    def test_coherent_signal_in_corners_is_flagged_and_an_explicit_clean_mask_is_accepted(self):
+        inputs = self.noise_fixture()
+        raw = inputs['b0_raw']
+        corners = (abs(raw['X_m']) > .085) & (abs(raw['Y_m']) > .085)
+        contaminated = corners & (raw['X_m'] > 0)
+        raw['coil_images'][:, :, contaminated] += .2
+        with self.assertRaisesRegex(ValueError, 'possible signal contamination'):
+            prepare_echo_object(inputs, allow_uncalibrated_noise=False)
+        fallback = prepare_echo_object(inputs)
+        self.assertFalse(fallback['report']['noise']['calibrated'])
+        self.assertGreater(fallback['report']['noise']['coherent_mean_max_z'], 8)
+        self.assertFalse(fallback['report']['support']['SNR_used'])
+        clean = corners & (raw['X_m'] < 0)
+        fit = prepare_echo_object(inputs, noise_mask=clean, allow_uncalibrated_noise=False)
+        self.assertTrue(fit['report']['noise']['calibrated'])
+        np.testing.assert_array_equal(fit['noise_mask'], clean)
+        self.assertEqual(fit['report']['noise']['mask_source'], 'explicit signal-free mask')
+        self.assertFalse(np.any(fit['object_support'] & clean))
+
+    def test_identically_zero_receiver_does_not_create_false_corner_contamination(self):
+        inputs = self.noise_fixture()
+        coils = inputs['b0_raw']['coil_images']
+        inputs['b0_raw']['coil_images'] = np.concatenate((coils, np.zeros_like(coils[:, :1])), axis=1)
+        fit = prepare_echo_object(inputs, allow_uncalibrated_noise=False)
+        self.assertTrue(fit['report']['noise']['calibrated'])
+        self.assertEqual(fit['report']['noise']['per_receiver_complex_RMS'][-1], 0.)
+        self.assertTrue(fit['report']['support']['amplitude_debiased'])
+
+    def test_B0_overrides_are_checked_before_reading_reference_or_EPI(self):
+        with TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / 'sequences').mkdir()
+            for name in ('old_b0_map.dat', 'new_echoes.dat', 'one_reference.dat', 'one_scan.dat',
+                         'sequences/epi.seq', 'sequences/gre_32.seq', 'sequences/b0_map.seq',
+                         'sequences/new32.seq'):
+                (folder / name).write_text('fixture')
+            with patch('twin_inputs.read_b0_coil_images', side_effect=ValueError(
+                    'B0 echo_count: expected 32 echoes from sequence; found 3 in Twix.')) as read_b0, \
+                    patch('twin_inputs.read_gre') as read_gre, patch('twin_inputs.read_scan') as read_scan:
+                with self.assertRaisesRegex(ValueError, r'new_echoes.dat.*new32.seq.*expected 32.*found 3.*b0_scan_path'):
+                    read_twin_inputs(folder, b0_sequence_path='sequences/new32.seq', b0_scan_path='new_echoes.dat')
+                read_b0.assert_called_once_with(folder / 'new_echoes.dat', folder / 'sequences/new32.seq')
+                read_gre.assert_not_called()
+                read_scan.assert_not_called()
+
+    def test_B0_echo_subset_does_not_discard_relaxation_echoes(self):
+        import twin_inputs
+        coils = np.zeros((32, 2, 4, 4), complex)
+        times = .002 + np.arange(32) * .0018
+        raw = dict(coil_images=coils, X_m=np.zeros((4, 4)), Y_m=np.zeros((4, 4)))
+        with patch('twin_inputs.b0_from_coil_images', return_value={'metadata': {}}) as estimate:
+            field, count = twin_inputs._estimate_field(raw, times, 6)
+            np.testing.assert_array_equal(estimate.call_args.args[0], coils[:6])
+            np.testing.assert_array_equal(estimate.call_args.args[1], times[:6])
+            self.assertEqual(count, 6)
+            self.assertEqual(field['metadata']['field_echo_indices'], list(range(6)))
+            self.assertEqual(field['metadata']['available_relaxation_echo_count'], 32)
+            self.assertEqual(raw['coil_images'].shape[0], 32)
+        for invalid in (True, 1, 33, 6.5):
+            with self.assertRaisesRegex(ValueError, 'b0_echo_count'):
+                twin_inputs._estimate_field(raw, times, invalid)
+
+    def test_synthetic_sequence_defaults_to_manifest_and_accepts_matching_paths(self):
+        with TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / 'acquisition.json').write_text(json.dumps(
+                {'format': 'mrzero_synthetic_acquisition'}))
+            result = {'paths': {'scan_sequence': folder / 'sequences/manifest64.seq'}}
+            # A synthetic acquisition does not select arbitrary files by glob.
+            with patch('Mrzero_simulation.synthetic_inputs.read_synthetic_twin_inputs', return_value=result):
+                self.assertIs(read_twin_inputs(folder), result)
+                for matching in ('sequences/manifest64.seq', result['paths']['scan_sequence']):
+                    self.assertIs(read_twin_inputs(folder, scan_sequence_path=matching), result)
+
+    def test_synthetic_sequence_conflict_reports_requested_and_manifest_paths(self):
+        with TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / 'acquisition.json').write_text(json.dumps(
+                {'format': 'mrzero_synthetic_acquisition'}))
+            result = {'paths': {'scan_sequence': folder / 'sequences/manifest64.seq'}}
+            with patch('Mrzero_simulation.synthetic_inputs.read_synthetic_twin_inputs', return_value=result):
+                with self.assertRaises(ValueError) as caught:
+                    read_twin_inputs(folder, scan_sequence_path='sequences/other128.seq')
+            message = str(caught.exception)
+            self.assertIn('Requested: ' + str((folder / 'sequences/other128.seq').resolve()), message)
+            self.assertIn('expected: ' + str((folder / 'sequences/manifest64.seq').resolve()), message)
+            self.assertIn('scan_sequence_path=None', message)
+            self.assertIn('rerun the input/configuration cells', message)
 
 
 if __name__ == '__main__':

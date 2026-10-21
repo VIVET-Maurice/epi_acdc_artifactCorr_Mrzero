@@ -57,6 +57,25 @@ les tailles de blocs du programme ; il n'installe pas une autre distribution
 de PyTorch. Une nouvelle combinaison GPU/PyTorch doit être contrôlée sur ce
 serveur avant un calcul long.
 
+Pour la **RTX PRO 6000 Blackwell (`sm_120`)**, la **GTX 1660 Ti (`sm_75`)**
+et la **V100 (`sm_70`)**, une distribution commune est disponible :
+
+```bash
+python -m pip install --upgrade torch==2.8.0+cu128 --index-url https://download.pytorch.org/whl/cu128
+```
+
+Dans Jupyter, remplacer `python -m pip` par `%pip` pour viser le Python du noyau,
+puis **redémarrer le noyau**. Le notebook peut conserver `GPU_PROFILE="auto"`
+sur les trois cartes. Cette commande remplace la variante CUDA 11.8 de PyTorch
+dans l'environnement choisi ; elle ne modifie pas le pilote NVIDIA, qui doit
+être compatible CUDA 12.8.
+Les [architectures de la distribution Linux PyTorch 2.8.0 / CUDA 12.8](https://github.com/pytorch/pytorch/blob/v2.8.0/.ci/manywheel/build_cuda.sh)
+comprennent `sm_70`, `sm_75` et `sm_120`. La variante CUDA 12.8 de PyTorch 2.7.1
+excluait `sm_70` ; la version 2.8 rétablit cette architecture. Une V100 peut aussi
+conserver l'environnement CUDA 11.8 décrit plus haut sur sa machine. Les
+machines peuvent utiliser le même notebook avec une distribution PyTorch adaptée
+à leur carte et à leur pilote.
+
 ### Exécution CPU uniquement
 
 ```bash
@@ -105,8 +124,34 @@ PY
 
 Un `True` pour CUDA et le petit calcul complexe vérifient le chargement du GPU.
 Le notebook affiche ensuite son GPU, sa précision et ses tailles de blocs
-effectifs. `GPU_PROFILE="v100"` ou `"blackwell"` impose CUDA ; `"auto"` peut
-revenir au CPU si CUDA est indisponible.
+effectifs. `GPU_PROFILE="v100"` ou `"blackwell"` impose CUDA ; `"auto"` revient
+au CPU si CUDA est indisponible ou si le test d'exécution échoue. Dans ce dernier
+cas, un avertissement affiche la carte, sa capacité, la version PyTorch, le
+runtime CUDA et les architectures compilées. Le motif reste enregistré dans
+`model.runtime_info["cpu_fallback_reason"]`. La précision `"auto"` devient
+float64 sur CPU ; la simulation native MRzero reste float32.
+
+L'erreur `no kernel image is available for execution on the device` peut donc
+survenir même si `torch.cuda.is_available()` vaut `True` : les kernels de la
+distribution installée ne conviennent pas au GPU. Choisir une distribution
+compatible dans **l'interpréteur utilisé par le notebook**, puis redémarrer le
+noyau. Changer seulement `GPU_PROFILE` n'installe pas de nouveaux kernels.
+Le repli CPU permet de poursuivre, avec un temps de calcul potentiellement
+beaucoup plus long.
+
+Le notebook **06** impose par défaut `GPU_REQUIRED=True`, tout en conservant
+`GPU_PROFILE="auto"` pour sélectionner GTX 1660 Ti, V100 ou Blackwell. Son contrôle
+initial et son modèle utilisent `require_cuda=True` : un GPU absent ou une
+distribution incompatible arrête donc le calcul avant l'optimisation. Pour un
+calcul CPU volontaire, choisir `GPU_REQUIRED=False` et `GPU_PROFILE="cpu"`.
+Après un changement de distribution PyTorch, redémarrer le noyau puis reconstruire
+le modèle en relançant le notebook depuis le début.
+
+À l'étape 6, le périphérique de calcul (`model.device`) est affiché séparément du
+stockage du cache MRzero. `Cache = CPU` signifie que le signal fixe est conservé
+en RAM ; le calcul peut rester sur CUDA avec transfert des blocs vers le GPU.
+`use_cuda_graph=False` désactive la capture des opérations, pas CUDA. Ce réglage
+conserve la projection matérielle du notebook 04.
 
 L'environnement Windows audité le 20 octobre 2026 contenait Python 3.11.9,
 MRzeroCore 1.1.1, PyTorch 2.6.0+cu118, NumPy 2.4.6, SciPy 1.17.1,

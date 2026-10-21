@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -19,6 +20,13 @@ def cpu_model(experiment, calibration, **options):
 
 
 class EchoSubspinTests(unittest.TestCase):
+    def test_required_gpu_is_enforced_before_native_simulation(self):
+        _, _, experiment, calibration = expanded_fixture(children=2)
+        experiment["amplitude_reference_time_s"] = .004
+        with patch.object(torch.cuda, "is_available", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "this run requires a GPU"):
+                EchoSubspinACDCModel(experiment, calibration, profile="auto", require_cuda=True)
+
     def test_explicit_echo_anchor_matches_scalar_bloch_and_ideal_reference(self):
         _, _, experiment, calibration = expanded_fixture(children=3, in_plane=True)
         anchor = .0042

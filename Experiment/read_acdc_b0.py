@@ -26,8 +26,11 @@ def read_b0_sequence(path: Path) -> dict:
     """Read actual ADC trajectories/times for a full, monopolar multi-echo GRE.
 
     Two or more equally spaced echoes are supported. Leading dummy RF pulses
-    are allowed; every acquired RF must have the same echo train. A tolerance
-    of 0.002 k-space samples allows decimal rounding in exported .seq files.
+    are allowed; every acquired RF must have the same echo train. Within-echo
+    Cartesian spacing is checked to 0.002 samples. A small, uniform offset
+    per echo (up to 0.02 samples) accommodates accumulated gradient rounding
+    over long echo trains. Actual ADC coordinates/times are never rounded.
+    ``EchoSamples`` is advisory: the ADC events determine the sample count.
     """
     import pypulseq as pp
 
@@ -75,12 +78,14 @@ def read_b0_sequence(path: Path) -> dict:
     # phase-gradient amplitudes in text .seq files.
     dx = float(np.polyfit(np.arange(nx), trajectory[0].mean(axis=(0, 1)), 1)[0])
     dy = float(np.polyfit(np.arange(ny), trajectory[1, :, 0, 0], 1)[0])
-    offset = float(np.median(trajectory[0, :, :, nx // 2]))
+    echo_offsets = np.median(trajectory[0, :, :, nx // 2], axis=0)
+    offset = float(np.median(echo_offsets))
     grid_offset = min((0.0, dx / 2), key=lambda value: abs(offset - value))
-    expected_x = (np.arange(nx) - nx // 2) * dx + grid_offset
+    expected_x = (np.arange(nx) - nx // 2)[None, :] * dx + echo_offsets[:, None]
     expected_y = (np.arange(ny) - ny // 2) * dy
     if (dx <= 0 or dy <= 0
-            or not np.allclose(trajectory[0], expected_x[None, None, :], rtol=0, atol=.002 * dx)
+            or np.max(np.abs(echo_offsets - grid_offset)) > .02 * dx
+            or not np.allclose(trajectory[0], expected_x[None, :, :], rtol=0, atol=.002 * dx)
             or not np.allclose(trajectory[1], expected_y[:, None, None], rtol=0, atol=.002 * dy)):
         raise ValueError("B0 requires full uniform Cartesian sampling, without partial Fourier or ramp sampling.")
     fov = np.asarray([1 / dx, 1 / dy])
@@ -96,7 +101,11 @@ def read_b0_sequence(path: Path) -> dict:
     phases = np.asarray([rf[index]["phase"] - event["phase"] for index, event in zip(rf_index, adc)])
     if np.max(np.abs(np.angle(np.exp(1j * (phases - phases[0]))))) > 1e-6:
         raise ValueError("B0 needs matching RF/ADC phase offsets across echoes and lines.")
-    for name, measured, tolerance in (("TE", te, 1e-7), ("TR", [tr], 1e-7),
+    # Declared TEs may use the nominal grid centre. Keep the measured zero-k
+    # crossing and allow only the timing shift implied by the accepted tiny
+    # readout-centre offsets (0.156 us for a 7.8 us dwell).
+    te_definition_tolerance = max(1e-7, .02 * dwell)
+    for name, measured, tolerance in (("TE", te, te_definition_tolerance), ("TR", [tr], 1e-7),
                                        ("Matrix", [nx, ny], 0), ("FOV", fov, 1e-6)):
         if name in sequence.definitions:
             declared = np.asarray(sequence.definitions[name], float).reshape(-1)
@@ -109,6 +118,11 @@ def read_b0_sequence(path: Path) -> dict:
             "polarity": int(polarity[0, 0]), "acquired_phase_rows": np.argsort(order).tolist(),
             "dummy_rf_count": int(active[0]), "sequence_duration_s": duration,
             "readout_grid_offset_mInv": grid_offset, "trajectory_tolerance_samples": .002,
+            "echo_readout_center_mInv": echo_offsets.tolist(),
+            "echo_readout_center_error_samples": ((echo_offsets - grid_offset) / dx).tolist(),
+            "echo_readout_center_tolerance_samples": .02,
+            "TE_definition_tolerance_s": te_definition_tolerance,
+            "sample_count_source": "Actual ADC events; EchoSamples definition is advisory.",
             "sequence_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
@@ -270,7 +284,8 @@ def read_b0_coil_images(path: Path, sequence_path: Path | None = None) -> dict:
         for key, tolerance in (("image_shape", 0), ("echo_count", 0), ("polarity", 0),
                                ("TE_s", 1e-6), ("TR_s", 1e-6), ("dwell_s", 1e-10), ("FOV_m", 1e-6)):
             if not np.allclose(metadata[key], sequence[key], rtol=0, atol=tolerance):
-                raise ValueError(f"B0 Twix {key} disagrees with the supplied B0 sequence.")
+                raise ValueError(f"B0 Twix {key} disagrees with the supplied B0 sequence: "
+                                 f"expected {sequence[key]}, found {metadata[key]}.")
         expected_order = [(row, echo) for row in sequence["acquired_phase_rows"] for echo in range(ne)]
         if [(block.cLin, block.cEco) for block in lines] != expected_order:
             raise ValueError("B0 Twix echo/phase-line acquisition order disagrees with its sequence.")

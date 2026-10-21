@@ -158,6 +158,8 @@ def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit
             "callback_seconds": callback_seconds,
             "seconds_without_callback": max(0.0, seconds - callback_seconds),
             "callback_every": int(callback_every),
+            "device": str(model.device), "precision": str(model.dtype),
+            "native_baseline_cache": model.runtime_info.get("native_baseline_cache"),
             "cuda_graph": evaluator.report,
             "initial_was_projected": not np.array_equal(initial_used, model.numpy(requested)),
             "algorithm": "projected Adam; box/L1 projection and radial field contraction"}
