@@ -9,9 +9,10 @@ import hashlib
 import json
 import sys
 import numpy as np
+import torch
 from scipy import ndimage
 
-from prepare_acdc_inputs import read_gre, read_scan
+from prepare_acdc_inputs import read_gre, read_scan, check_physical_geometry
 from read_acdc_sequence import read_sequence
 from read_acdc_b0 import read_b0_coil_images, b0_from_coil_images
 from prepare_acdc_simulation_grid import prepare_simulation_reference
@@ -39,19 +40,102 @@ def _estimate_field(raw, echo_times, requested_count):
     return field, count
 
 
-def read_twin_inputs(folder, *, scan_sequence_path=None, b0_sequence_path=None,
-                     b0_scan_path=None, b0_echo_count=None):
-    """Read native inputs, with explicit EPI and multi-echo B0 selections.
+def _check_slice_geometry(reference_metadata, scan_metadata, b0_metadata):
+    """Check observed slice headers without changing any acquisition's grid."""
+    sources = (('reference GRE', reference_metadata), ('EPI', scan_metadata), ('B0', b0_metadata))
+    checked = []
+    for index, (left_name, left) in enumerate(sources):
+        for right_name, right in sources[index + 1:]:
+            for key, label, tolerance in (
+                    ('slice_position_mm', 'slice planes/origins', 1e-3),
+                    ('slice_thickness_mm', 'slice thicknesses', 1e-3)):
+                if key in left and key in right:
+                    if not np.allclose(left[key], right[key], rtol=0, atol=tolerance):
+                        raise ValueError(f'{left_name} and {right_name} describe different {label}.')
+                    checked.append(f'{left_name}/{right_name}: {key}')
+            key = 'slice_quaternion_wxyz'
+            if key in left and key in right:
+                if not np.isclose(abs(np.dot(left[key], right[key])), 1, atol=1e-8):
+                    raise ValueError(f'{left_name} and {right_name} describe different readout/phase orientations.')
+                checked.append(f'{left_name}/{right_name}: {key}')
+    return checked
+
+
+def _read_nominal_reference(path):
+    """Read full mono-echo GRE on the nominal Cartesian grid from Twix headers.
+
+    This mode has no Pulseq trajectory verification. The raw reader still
+    validates complete phase rows, counters, centered sampling and slice
+    headers; the reference's native matrix never comes from the EPI sequence.
+    """
+    if Path(path).suffix.lower() != '.dat':
+        raise ValueError('A reference without its own sequence must be a Cartesian GRE Twix .dat.')
+    magnitude, metadata, diagnostics = read_scan(path, None, return_intermediates=True)
+    if metadata['navigator_count'] != 0 or len(set(metadata['polarity'])) != 1:
+        raise ValueError('A nominal reference requires mono-echo GRE without EPI navigators or alternating rows.')
+    quaternion = np.asarray(metadata['slice_quaternion_wxyz'], float)
+    expected_quaternion = np.asarray([1, 0, 0, 1], float) / np.sqrt(2)
+    if not np.isclose(abs(np.dot(quaternion, expected_quaternion)), 1, atol=1e-8):
+        raise ValueError('The reference Twix supports the existing axial orientation only.')
+    center = np.asarray(metadata['slice_position_mm'], float)
+    if np.any(abs(center[:2]) > 1e-3):
+        raise ValueError('The reference Twix requires a centered in-plane origin.')
+    fov = np.asarray(metadata['FOV_m'], float)
+    thickness = float(metadata['slice_thickness_mm'])
+    te, tr, dwell = (float(metadata[key]) for key in ('TE_s', 'TR_s', 'dwell_s'))
+    if (fov.shape != (2,) or not np.isfinite(fov).all() or np.any(fov <= 0)
+            or not np.isfinite(thickness) or thickness <= 0
+            or not np.isfinite([te, tr, dwell]).all() or not 0 < te < tr or dwell <= 0):
+        raise ValueError('Reference Twix FOV, slice thickness and acquisition timing must be finite and positive.')
+    ny, nx = magnitude.shape
+    if nx % 2 or ny % 2:
+        raise ValueError('A nominal reference requires an even centered Cartesian matrix.')
+    dx_mm, dy_mm = fov * 1000 / np.asarray([nx, ny])
+    x = (np.arange(nx) - nx // 2) * dx_mm * 1e-3 + center[1] * 1e-3
+    y = (np.arange(ny) - ny // 2) * dy_mm * 1e-3 - center[0] * 1e-3
+    X, Y = np.meshgrid(x, y)
+    gre = dict(magnitude=magnitude, X_m=X, Y_m=Y,
+        position_mm=center + [ny // 2 * dy_mm, -nx // 2 * dx_mm, 0],
+        spacing_mm=np.asarray([dy_mm, dx_mm]), orientation=np.asarray([0, 1, 0, -1, 0, 0], float),
+        slice_thickness_mm=thickness, TE_s=te, TR_s=tr,
+        flip_deg=float(metadata['header_flip_deg']), twix_metadata=metadata)
+    kx, ky = np.meshgrid((np.arange(nx) - nx // 2) / fov[0],
+                         (np.arange(ny) - ny // 2) / fov[1])
+    acquisition = dict(kx_mInv=kx, ky_mInv=ky, FOV_m=fov,
+        sequence_kind='gre', TE_s=te, TR_s=tr, dwell_s=dwell,
+        flip_deg=gre['flip_deg'], polarity=np.asarray(metadata['polarity']),
+        trajectory_source='nominal centered Cartesian grid from Twix headers')
+    diagnostics['reference_trajectory_source'] = acquisition['trajectory_source']
+    return gre, diagnostics, acquisition
+
+
+def read_twin_inputs(folder, *, scan_sequence_path=None, scan_path=None,
+                     reference_sequence_path=None, reference_scan_path=None,
+                     b0_sequence_path=None, b0_scan_path=None, b0_echo_count=None,
+                     reconstruction_device="cpu", reconstruction_dtype=torch.float64):
+    """Read native inputs, with independent EPI, reference GRE and B0 selections.
 
     Relative scan_sequence_path values are resolved under folder. Without an
     override, exactly one sequences/*epi*.seq must exist. Twix/sequence matrix
     validation remains active; changing a filename does not resample a scan.
+    ``reference_scan_path`` accepts any filename, independently of the EPI
+    matrix. Its own ``reference_sequence_path`` must describe mono-echo GRE;
+    omitted paths require a unique *reference*.dat. A unique mono-echo GRE
+    sequence under sequences/ is used if compatible; otherwise full Cartesian
+    Twix is reconstructed at its nominal header grid, with this limitation
+    reported in ``reference_sequence_validation``. An explicit reference
+    sequence is always checked strictly. All explicit paths can be relative to folder
+    or absolute. ``scan_path`` defaults to the unique *scan.dat after excluding
+    the selected reference and B0 files. A 64x64 or 128x128 reference keeps its
+    native coordinates and is checked against its own sequence.
     ``b0_sequence_path`` defaults to sequences/b0_map.seq and ``b0_scan_path``
     to the unique *b0_map.dat. Overrides are resolved under folder. The B0
     Twix is checked against its sequence before the reference/EPI are read;
     selecting a new 32-echo .seq never converts an old three-echo .dat.
     ``b0_echo_count`` uses only the first N measured echoes to estimate B0;
     all validated echoes remain available for relaxation fitting. None uses all.
+    ``reconstruction_device`` and ``reconstruction_dtype`` select measured-data
+    Fourier reconstruction; outputs remain NumPy arrays at the actual ADC k.
     """
     folder = Path(folder)
     manifest = None
@@ -65,6 +149,9 @@ def read_twin_inputs(folder, *, scan_sequence_path=None, b0_sequence_path=None,
             from Mrzero_simulation.synthetic_inputs import read_synthetic_twin_inputs
             result = read_synthetic_twin_inputs(folder)
             for override, key, argument in ((scan_sequence_path, 'scan_sequence', 'scan_sequence_path'),
+                                            (scan_path, 'scan', 'scan_path'),
+                                            (reference_sequence_path, 'reference_sequence', 'reference_sequence_path'),
+                                            (reference_scan_path, 'reference', 'reference_scan_path'),
                                             (b0_sequence_path, 'b0_sequence', 'b0_sequence_path'),
                                             (b0_scan_path, 'b0', 'b0_scan_path')):
                 if override is None:
@@ -83,10 +170,13 @@ def read_twin_inputs(folder, *, scan_sequence_path=None, b0_sequence_path=None,
                 result['field'], result['field_echo_count'] = _estimate_field(
                     result['b0_raw'], np.asarray(result['echo_times_s']), b0_echo_count)
             return result
-    def unique(pattern):
-        paths = list(folder.glob(pattern))
+    def unique(pattern, argument, excluded=()):
+        excluded = {Path(path).resolve() for path in excluded}
+        paths = sorted(path for path in folder.glob(pattern) if path.resolve() not in excluded)
         if len(paths) != 1:
-            raise ValueError(f'Expected one {pattern}, found {len(paths)}.')
+            names = ', '.join(path.name for path in paths) or '(none)'
+            raise ValueError(f'Expected one {pattern}, found {len(paths)}: {names}. '
+                             f'Set {argument} explicitly (relative to the acquisition folder, or absolute).')
         return paths[0]
     if scan_sequence_path is None:
         candidates = sorted(folder.glob('sequences/*epi*.seq'))
@@ -110,32 +200,93 @@ def read_twin_inputs(folder, *, scan_sequence_path=None, b0_sequence_path=None,
         return selected
     b0_sequence_path = selected_path(b0_sequence_path, folder/'sequences/b0_map.seq', 'B0 sequence')
     b0_scan_path = selected_path(b0_scan_path,
-        unique('*b0_map.dat') if b0_scan_path is None else None, 'B0 scan')
-    paths = dict(reference=unique('*reference.dat'), b0=b0_scan_path,
-        scan=unique('*scan.dat'), scan_sequence=scan_sequence_path,
-        reference_sequence=unique('sequences/gre_32*.seq'),
-        b0_sequence=b0_sequence_path)
+        unique('*b0_map.dat', 'b0_scan_path') if b0_scan_path is None else None, 'B0 scan')
     try:
-        raw = read_b0_coil_images(paths['b0'], paths['b0_sequence'])
+        raw = read_b0_coil_images(b0_scan_path, b0_sequence_path)
     except ValueError as error:
-        raise ValueError(f"B0 scan {paths['b0']} is incompatible with B0 sequence "
-                         f"{paths['b0_sequence']}: {error} Select the matching acquired "
+        raise ValueError(f"B0 scan {b0_scan_path} is incompatible with B0 sequence "
+                         f"{b0_sequence_path}: {error} Select the matching acquired "
                          ".dat with b0_scan_path; a new .seq does not replace a measurement.") from error
     _field_echo_count(b0_echo_count, len(raw['metadata']['TE_s']))
+    reference_scan_path = selected_path(reference_scan_path,
+        unique('*reference*.dat', 'reference_scan_path', (b0_scan_path,))
+        if reference_scan_path is None else None, 'Reference scan')
+    scan_path = selected_path(scan_path,
+        unique('*scan.dat', 'scan_path', (reference_scan_path, b0_scan_path))
+        if scan_path is None else None, 'EPI scan')
+    if len({path.resolve() for path in (reference_scan_path, scan_path, b0_scan_path)}) != 3:
+        raise ValueError('Reference, EPI and B0 must select three distinct measurement files.')
+    explicit_reference_sequence = reference_sequence_path is not None
+    reference_acquisition = reference_timing = None
+    if not explicit_reference_sequence:
+        candidates = []
+        excluded_sequences = {Path(path).resolve() for path in (scan_sequence_path, b0_sequence_path)}
+        for path in sorted((folder / 'sequences').glob('*.seq')):
+            if path.resolve() in excluded_sequences:
+                continue
+            try:
+                candidate_acquisition, candidate_timing = read_sequence(path)
+            except ValueError:
+                continue  # Multi-echo/B0 and unsupported sequences are not reference GRE.
+            if candidate_acquisition.get('sequence_kind') == 'gre':
+                candidates.append((path, candidate_acquisition, candidate_timing))
+        if len(candidates) > 1:
+            names = ', '.join(path.name for path, _, _ in candidates) or '(none)'
+            raise ValueError(f'Expected one mono-echo GRE reference sequence, found {len(candidates)}: '
+                             f'{names}. Set reference_sequence_path explicitly.')
+        if candidates:
+            reference_sequence_path, reference_acquisition, reference_timing = candidates[0]
+    else:
+        reference_sequence_path = selected_path(reference_sequence_path, None, 'Reference sequence')
+        reference_acquisition, reference_timing = read_sequence(reference_sequence_path)
+    if reference_acquisition is not None and reference_acquisition.get('sequence_kind') != 'gre':
+        raise ValueError(f'Reference sequence {reference_sequence_path} must describe mono-echo GRE/FLASH.')
+    reference_report = dict(mode='pulseq', validated=True, selection='explicit' if explicit_reference_sequence else 'auto')
+    if reference_acquisition is not None:
+        try:
+            gre, gd = read_gre(reference_scan_path, reference_acquisition, return_intermediates=True)
+        except ValueError as error:
+            if explicit_reference_sequence:
+                raise
+            reference_report = dict(mode='twix_header_nominal_cartesian', validated=False,
+                reason=f'Automatic reference sequence {reference_sequence_path.name} is incompatible: {error}',
+                rejected_sequence_path=str(reference_sequence_path))
+            reference_sequence_path = reference_acquisition = reference_timing = None
+    else:
+        reference_report = dict(mode='twix_header_nominal_cartesian', validated=False,
+            reason='No mono-echo GRE reference sequence was supplied or found.')
+    if reference_acquisition is None:
+        gre, gd, reference_acquisition = _read_nominal_reference(reference_scan_path)
+        reference_timing = dict(sequence_kind='gre', trajectory_source=reference_acquisition['trajectory_source'])
+        reference_report.update(raw_cartesian_validated=True, sequence_verified=False,
+            image_shape=list(gre['magnitude'].shape), trajectory_source=reference_acquisition['trajectory_source'])
+    gre['reference_sequence_validation'] = reference_report
+    paths = dict(reference=reference_scan_path, b0=b0_scan_path,
+        scan=scan_path, scan_sequence=scan_sequence_path,
+        reference_sequence=reference_sequence_path, b0_sequence=b0_sequence_path)
+    if reference_sequence_path is None:
+        del paths['reference_sequence']
     acquisition, timing = read_sequence(paths['scan_sequence'])
-    reference_acquisition, _ = read_sequence(paths['reference_sequence'])
-    gre, gd = read_gre(paths['reference'], reference_acquisition, return_intermediates=True)
-    gre['magnitude'], _ = reconstruct_receivers(gd, reference_acquisition)
+    gre['magnitude'], _ = reconstruct_receivers(gd, reference_acquisition,
+        device=reconstruction_device, dtype=reconstruction_dtype)
     scan, scan_metadata, sd = read_scan(paths['scan'], acquisition, return_intermediates=True)
-    scan, _ = reconstruct_receivers(sd, acquisition)
-    reconstruct_b0_echoes(raw, paths['b0_sequence'])
+    scan, _ = reconstruct_receivers(sd, acquisition,
+        device=reconstruction_device, dtype=reconstruction_dtype)
+    check_physical_geometry(gre, scan_metadata, acquisition,
+        np.isfinite(gre['magnitude']), gre['X_m'], gre['Y_m'], dicom_input=False)
+    geometry_checks = _check_slice_geometry(gre.get('twix_metadata', {}),
+        scan_metadata, raw['metadata'])
+    reconstruct_b0_echoes(raw, paths['b0_sequence'],
+        device=reconstruction_device, dtype=reconstruction_dtype)
     echo_times = np.asarray(raw['metadata']['TE_s'])
     field, field_echo_count = _estimate_field(raw, echo_times, b0_echo_count)
     return dict(paths=paths, acquisition=acquisition, timing=timing, gre=gre,
         scan=scan, scan_metadata=scan_metadata, scan_diagnostics=sd, b0_raw=raw,
+        reference_acquisition=reference_acquisition, reference_timing=reference_timing,
+        reference_diagnostics=gd, reference_sequence_validation=reference_report, geometry_checks=geometry_checks,
         field=field, field_echo_count=field_echo_count, echo_times_s=echo_times, manifest=manifest,
         source_sha256={name:hashlib.sha256(path.read_bytes()).hexdigest()
-                       for name,path in paths.items()})
+                       for name,path in paths.items() if path is not None})
 
 
 def prepare_echo_object(inputs, threshold_fraction=.04, background_corner_m=.085, *,

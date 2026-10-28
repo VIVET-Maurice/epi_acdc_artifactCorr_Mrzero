@@ -13,6 +13,7 @@ import numpy as np
 import torch
 
 from experiment_realistic import RealisticACDCModel
+from measured_image_target import relative_image_mse
 
 
 class SubspinACDCModel(RealisticACDCModel):
@@ -169,7 +170,6 @@ class SubspinACDCModel(RealisticACDCModel):
         current_sums = np.abs(actual).sum(axis=0)
         instantaneous_image, instantaneous_kdata = self.forward(commands, response_enabled=False)
         response_image, response_kdata = self.forward(commands)
-        energy = float(np.sum(np.abs(self.reference)**2))
         step_time = np.linspace(0, 1.3 * tau.max() * np.log(100), 256)
         result = {
             "adc_time_s": times, "commanded_currents_at_adc_A": adc["commanded_A"],
@@ -196,11 +196,9 @@ class SubspinACDCModel(RealisticACDCModel):
                 np.abs(actual) <= self.numpy(self.max_current_A)[:, None] + 1e-8)),
             "actual_adc_current_sum_limits_met": bool(np.all(current_sums < total_current_limit_A)),
             "instantaneous_image": instantaneous_image, "instantaneous_kdata": instantaneous_kdata,
-            "instantaneous_relative_mse": float(np.sum(
-                (np.abs(instantaneous_image) - np.abs(self.reference))**2) / energy),
+            "instantaneous_relative_mse": relative_image_mse(self, instantaneous_image),
             "response_image": response_image, "response_kdata": response_kdata,
-            "response_relative_mse": float(np.sum(
-                (np.abs(response_image) - np.abs(self.reference))**2) / energy),
+            "response_relative_mse": relative_image_mse(self, response_image),
             "limit_check_domain": "all reliable subspins at ADC samples; command-state bounds remain constraints",
             "field_maximum_ADC_chunk": 64,
         }

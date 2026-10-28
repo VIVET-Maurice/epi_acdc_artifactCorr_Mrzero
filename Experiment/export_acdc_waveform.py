@@ -8,6 +8,7 @@ data only: it does not upload a waveform or control the FPGA.
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import re
 
 import numpy as np
@@ -44,7 +45,13 @@ def quantize_currents(currents_A) -> np.ndarray:
 
 
 def validate_waveform_settings(settings: dict, n_channels: int) -> dict:
-    """Validate channel order, polarity and current limits for the CSV."""
+    """Normalize output mapping and current bounds without changing settings.
+
+    ``disabled_channels`` lists physical output numbers (1-based), not indices
+    into the calibrated basis. Their bounds become exactly zero in basis
+    order. Explicit zero bounds also mark their mapped outputs as disabled.
+    Use the returned bounds for optimization as well as for CSV validation.
+    """
     required = ("channel_map", "channel_polarity", "max_current_A", "total_current_limit_A")
     missing = [name for name in required if name not in settings]
     if missing:
@@ -57,15 +64,26 @@ def validate_waveform_settings(settings: dict, n_channels: int) -> dict:
     polarity = _array(settings["channel_polarity"], "channel_polarity")
     if polarity.shape != (n_channels,) or not np.isin(polarity, [-1, 1]).all():
         raise ValueError("channel_polarity needs one +1 or -1 per calibrated channel.")
-    limits = _array(settings["max_current_A"], "max_current_A")
+    limits = _array(settings["max_current_A"], "max_current_A").copy()
     if limits.ndim == 0:
         limits = np.full(n_channels, float(limits))
-    if limits.shape != (n_channels,) or (limits <= 0).any() or (limits > 3).any():
-        raise ValueError("max_current_A must be positive, at most 3 A, scalar or one per channel.")
+    if limits.shape != (n_channels,) or (limits < 0).any() or (limits > 3).any():
+        raise ValueError("max_current_A must be nonnegative, at most 3 A, scalar or one per channel.")
+    disabled = np.asarray(settings.get("disabled_channels", []), dtype=object)
+    if (disabled.ndim != 1 or any(isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer)) for value in disabled)):
+        raise ValueError("disabled_channels must be a list of integer physical output numbers, not booleans.")
+    disabled = [int(value) for value in disabled]
+    if len(set(disabled)) != len(disabled):
+        raise ValueError("disabled_channels must contain unique physical output numbers.")
+    if not set(disabled).issubset(channels.astype(int).tolist()):
+        raise ValueError("Every disabled_channels output must be present in channel_map.")
+    limits[np.isin(channels, disabled)] = 0.
     clean = {
         "channel_map": channels.astype(int).tolist(),
         "channel_polarity": polarity.astype(int).tolist(),
         "max_current_A": limits.tolist(),
+        "disabled_channels": sorted(channels[limits == 0].astype(int).tolist()),
         "total_current_limit_A": _positive(settings["total_current_limit_A"], "total_current_limit_A"),
     }
     if settings.get("min_dac_interval_s") is not None:
@@ -78,7 +96,9 @@ def export_waveform(currents_A, state_edges_s, settings: dict, output_dir, *,
                     include_zero_preamble: bool = True,
                     include_final_zero_row: bool = True,
                     zero_time_column: bool = False,
-                    numbered_filename: bool = False) -> dict:
+                    numbered_filename: bool = False,
+                    filename_prefix: str | None = None,
+                    start_at_first_nonzero: bool = False) -> dict:
     """Write a waveform CSV, with optional zero-current boundary rows.
 
     ``currents_A`` has shape [calibrated channels, states]. ``state_edges_s``
@@ -88,13 +108,29 @@ def export_waveform(currents_A, state_edges_s, settings: dict, output_dir, *,
     ``include_zero_preamble`` is true. ``include_final_zero_row`` controls the
     final all-zero row. ``include_header`` controls the commented column header,
     and ``zero_time_column`` writes zero instead of each timestamp. No clipping,
-    interpolation, timing shift or current-to-DAC conversion is applied.
+    interpolation or current-to-DAC conversion is applied.
+
+    With ``start_at_first_nonzero=True``, omit initial states whose currents
+    are all exactly zero and subtract the first remaining state's original
+    start time from every exported edge. No state is duplicated, and no zero
+    preamble is added. If all commands are zero, retain every state and subtract
+    the original first edge, reporting ``first_nonzero_found=False``. Original
+    model edges and state count remain in ``state_edges_s`` and ``states``;
+    ``csv_state_edges_s`` and ``csv_states`` describe the exported layout.
 
     By default, write ``waveform.csv`` in an empty folder. With
     ``numbered_filename=True``, write ``waveform1.csv``, ``waveform2.csv``, etc.
     in the same folder, using one more than the largest existing numeric suffix.
     Existing files are never overwritten.
+
+    ``filename_prefix`` selects a simple filename stem in a shared output
+    folder. For example, ``"waveform_static"`` writes ``waveform_static.csv``;
+    with numbering enabled, later exports become ``waveform_static2.csv``,
+    ``waveform_static3.csv``, etc. The default naming remains unchanged.
     """
+    if filename_prefix is not None and (not isinstance(filename_prefix, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", filename_prefix) is None):
+        raise ValueError("filename_prefix must be a simple filename stem using letters, digits, '_' or '-'.")
     currents = _array(currents_A, "currents_A")
     if currents.ndim != 2 or not 1 <= currents.shape[0] <= 64 or currents.shape[1] < 1:
         raise ValueError("currents_A must have shape [1..64 channels, at least one state].")
@@ -109,8 +145,16 @@ def export_waveform(currents_A, state_edges_s, settings: dict, output_dir, *,
     if np.any(total >= config["total_current_limit_A"]):
         raise ValueError("A state reaches/exceeds total_current_limit_A; a strict margin is required.")
 
-    has_zero_preamble = edges[0] > 0 and include_zero_preamble
-    state_times = edges if include_final_zero_row else edges[:-1]
+    nonzero_states = np.flatnonzero(np.any(currents != 0, axis=0))
+    first_nonzero_found = bool(nonzero_states.size)
+    leading_zero_states = (int(nonzero_states[0])
+                           if start_at_first_nonzero and first_nonzero_found else 0)
+    time_origin_shift_s = float(edges[leading_zero_states]) if start_at_first_nonzero else 0.
+    csv_edges = edges[leading_zero_states:] - time_origin_shift_s
+    csv_currents = currents[:, leading_zero_states:]
+    csv_states = csv_currents.shape[1]
+    has_zero_preamble = bool(csv_edges[0] > 0 and include_zero_preamble)
+    state_times = csv_edges if include_final_zero_row else csv_edges[:-1]
     times = np.r_[0.0, state_times] if has_zero_preamble else state_times
     minimum = config.get("min_dac_interval_s", 0.0)
     if np.any(np.diff(times) < minimum):
@@ -123,12 +167,32 @@ def export_waveform(currents_A, state_edges_s, settings: dict, output_dir, *,
     physical_channels = ((int(channel_map.max()) + 8) // 8) * 8
     mapped = np.zeros((times.size, physical_channels))
     first_state_row = int(has_zero_preamble)
-    mapped[first_state_row:first_state_row + n_states, channel_map] = (
-        currents.T * np.asarray(config["channel_polarity"])
+    mapped[first_state_row:first_state_row + csv_states, channel_map] = (
+        csv_currents.T * np.asarray(config["channel_polarity"])
     )
 
     output = Path(output_dir)
-    if numbered_filename:
+    if filename_prefix is not None:
+        output.mkdir(parents=True, exist_ok=True)
+        if numbered_filename:
+            pattern = re.compile(re.escape(filename_prefix) + r"([0-9]*)\.csv")
+            numbers = [int(match.group(1) or 1) for entry in output.iterdir()
+                       if (match := pattern.fullmatch(entry.name))]
+            number = max(numbers, default=0) + 1
+        else:
+            number = 1
+        while True:
+            suffix = "" if number == 1 else str(number)
+            csv_file = output / f"{filename_prefix}{suffix}.csv"
+            try:
+                stream = csv_file.open("x")
+            except FileExistsError:
+                if not numbered_filename:
+                    raise FileExistsError(f"{csv_file.name} already exists; existing waveforms are never overwritten.") from None
+                number += 1
+            else:
+                break
+    elif numbered_filename:
         output.mkdir(parents=True, exist_ok=True)
         numbers = [int(match.group(1)) for entry in output.iterdir()
                    if (match := re.fullmatch(r"waveform([0-9]+)\.csv", entry.name))]
@@ -158,8 +222,80 @@ def export_waveform(currents_A, state_edges_s, settings: dict, output_dir, *,
         "physical_channels": physical_channels,
         "states": n_states,
         "state_edges_s": edges.tolist(),
+        "csv_states": csv_states,
+        "csv_state_edges_s": csv_edges.tolist(),
+        "time_origin_shift_s": time_origin_shift_s,
+        "leading_zero_states": leading_zero_states,
+        "first_nonzero_found": first_nonzero_found,
+        "start_at_first_nonzero": bool(start_at_first_nonzero),
+        "csv_includes_zero_preamble": has_zero_preamble,
+        "csv_final_zero_s": float(csv_edges[-1]) if include_final_zero_row else None,
         "maximum_abs_current_A": float(np.max(np.abs(currents))),
         "maximum_total_abs_current_A": float(np.max(total)),
         "final_zero_s": float(edges[-1]),
         "settings": config,
+    }
+
+
+def export_zero_time_copy(csv_file, output_path=None) -> dict:
+    """Copy a waveform CSV, replacing only its numeric time fields with zero.
+
+    The default companion of ``waveform1.csv`` is
+    ``waveform1_zero_time.csv``. Headers, comments, blank lines, current fields,
+    row order and line endings are preserved byte for byte. In particular, no
+    current is parsed and reformatted or quantized. This companion does not
+    contain playback chronology; the original CSV remains the timing source.
+
+    An existing identical companion is accepted. A different existing file is
+    never overwritten, and the source cannot be used as the destination.
+    """
+    source = Path(csv_file)
+    output = (source.with_name(source.stem + "_zero_time.csv")
+              if output_path is None else Path(output_path))
+    if source.resolve() == output.resolve():
+        raise ValueError("The zero-time companion must differ from the source CSV.")
+    original = source.read_bytes()
+    converted = []
+    rows, column_count = 0, None
+    for line in original.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if not stripped.strip() or stripped.startswith(b"#"):
+            converted.append(line)
+            continue
+        _, separator, remainder = line.partition(b",")
+        fields = line.split(b",")
+        try:
+            values = np.asarray([float(field) for field in fields])
+        except (ValueError, OverflowError) as error:
+            raise ValueError("Source CSV needs finite numeric time and current fields.") from error
+        if (not separator or not 2 <= len(fields) <= 65
+                or not np.isfinite(values).all()
+                or (column_count is not None and len(fields) != column_count)):
+            raise ValueError("Source CSV needs consistent finite rows: time and 1..64 currents.")
+        column_count = len(fields)
+        rows += 1
+        converted.append(b"0," + remainder)
+    if rows == 0:
+        raise ValueError("Source CSV contains no numeric waveform rows.")
+    data = b"".join(converted)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with output.open("xb") as stream:
+            stream.write(data)
+        already_present = False
+    except FileExistsError:
+        if output.read_bytes() != data:
+            raise FileExistsError(
+                f"{output.name} already exists with different contents; existing waveforms are never overwritten."
+            ) from None
+        already_present = True
+    return {
+        "csv_file": str(output),
+        "source_csv_file": str(source),
+        "source_sha256": hashlib.sha256(original).hexdigest(),
+        "csv_sha256": hashlib.sha256(data).hexdigest(),
+        "time_column_all_zero": True,
+        "rows": rows,
+        "physical_channels": column_count - 1,
+        "already_present": already_present,
     }

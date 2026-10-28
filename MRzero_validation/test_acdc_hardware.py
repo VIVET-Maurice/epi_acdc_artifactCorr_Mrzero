@@ -140,6 +140,27 @@ class PhysicalCurrentTests(unittest.TestCase):
             torch.testing.assert_close(result, currents, rtol=0, atol=0)
             self.assertTrue(hardware.diagnostics(result, 20., 100.)["all_limits_met"])
 
+    def test_disabled_channel_does_not_contract_working_channel_to_zero(self):
+        model = tiny_model()
+        model.max_current_A[0] = 0.
+        hardware = HardwareConstraints(model, {"cycle_duration_s": 800e-6})
+        commands = model.tensor([[0., 0., 0.], [.1, -.2, .3]])
+        projected = hardware.additional_projection(commands, 20., 100.)
+        torch.testing.assert_close(projected, commands, rtol=0, atol=0)
+        _, actual = dense_waveform(model, model.numpy(projected), 800e-6)
+        np.testing.assert_array_equal(actual[0], 0.)
+        self.assertGreater(np.abs(actual[1]).max(), 0.)
+        report = hardware.diagnostics(projected, 20., 100.)
+        self.assertTrue(report["all_limits_met"])
+        self.assertEqual(report["peak_actual_channel_current_A"][0], 0.)
+        invalid = commands.clone()
+        invalid[0, 0] = 1e-6
+        self.assertFalse(hardware.diagnostics(invalid, 20., 100.)["all_limits_met"])
+        model.max_current_A[:] = 0.
+        off = hardware.additional_projection(torch.zeros_like(commands), 20., 100.)
+        torch.testing.assert_close(off, torch.zeros_like(off), rtol=0, atol=0)
+        self.assertTrue(hardware.diagnostics(off, 20., 100.)["all_limits_met"])
+
 
 class HardwareInputTests(unittest.TestCase):
     def test_invalid_or_missing_hardware_parameters_are_rejected(self):

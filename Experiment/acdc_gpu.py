@@ -150,6 +150,8 @@ def project_currents_tensor(currents, max_current_A, total_current_limit_A,
     bound while preserving those current bounds. That last step is feasible,
     but is not the Euclidean projection onto the full combined constraint set.
     Numerical margins keep strict CSV limits and float32 rounding inside bounds.
+    A zero channel limit fixes that channel at exactly zero, including when all
+    channels are disabled. Its calibrated field basis is left unchanged.
     """
     if currents.ndim != 2 or not currents.is_floating_point():
         raise ValueError("currents must be a real [channel, state] tensor.")
@@ -306,9 +308,9 @@ class ACDCModel:
         if enabled and self.sequence_kind != "epi":
             raise ValueError("First-order response is currently enabled for EPI only; disable it for GRE.")
         limits = _real_array(max_current_A, "max_current_A")
-        limits = np.full(self.nc, float(limits)) if limits.ndim == 0 else limits.reshape(-1)
-        if limits.shape != (self.nc,) or np.any(limits <= 0):
-            raise ValueError("max_current_A needs one positive value or one per channel.")
+        limits = np.full(self.nc, limits.item()) if limits.size == 1 else limits.reshape(-1)
+        if limits.shape != (self.nc,) or np.any(limits < 0):
+            raise ValueError("max_current_A needs one nonnegative value or one per channel; zero disables a channel.")
         self.max_current_A = self.tensor(limits)
         self.B = self.tensor(maps[self.support])
         self.B_quality = self.tensor(maps[self.quality_mask])
@@ -637,7 +639,11 @@ def optimize_image(model, initial_currents_A=None, *, total_current_limit_A=30.0
     if initial_currents_A is None:
         initial_currents_A = np.zeros((model.nc, model.nstates))
     requested = model._check_currents(initial_currents_A)
-    requested_value = float(model._objective_tensor(requested, gradient=False)[0])
+    requested_disabled = bool(((model.max_current_A == 0)[:, None] & (requested != 0)).any())
+    # Preserve the requested array as provenance, but never simulate an initial
+    # command that drives a disabled channel, even for this optional diagnostic.
+    requested_value = (None if requested_disabled else
+                       float(model._objective_tensor(requested, gradient=False)[0]))
     currents = model.project_tensor(requested, total_current_limit_A, field_limit_Hz)
     initial = currents.clone()
     best = currents.clone()
@@ -722,6 +728,7 @@ def optimize_image(model, initial_currents_A=None, *, total_current_limit_A=30.0
             "actual_adc_field_limits_met": diagnostics["actual_adc_field_limits_met"],
             "iterations": len(history["iteration"]) - 1, "seconds": seconds,
             "initial_was_projected": not np.array_equal(initial_used, model.numpy(requested)),
+            "requested_initial_evaluation_skipped_disabled_channels": requested_disabled,
             "algorithm": "projected Adam; box/L1 projection and radial field contraction"}
     return {"currents_A": commands, "initial_currents_A": initial_used,
             "requested_initial_currents_A": model.numpy(requested),

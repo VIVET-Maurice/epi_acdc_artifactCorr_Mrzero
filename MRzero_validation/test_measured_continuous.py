@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import numpy as np
+import torch
 
 from measured_continuous import reconstruct_receivers, reconstruct_b0_echoes
 
@@ -59,6 +60,9 @@ class MeasuredContinuousTests(unittest.TestCase):
         np.testing.assert_allclose(image, np.sqrt(np.sum(np.abs(corrected_images)**2, axis=0)), atol=2e-14)
         self.assertFalse(report["receiver_phase_reapplied"])
         self.assertEqual(report["receiver_count"], 3)
+        self.assertEqual(report["device"], "cpu")
+        self.assertEqual(report["dtype"], "torch.float64")
+        self.assertEqual(report["complex_dtype"], "torch.complex128")
 
     def test_receiver_off_grid_matches_direct_sum_without_phase_reapplication(self):
         acq = acquisition()
@@ -71,6 +75,21 @@ class MeasuredContinuousTests(unittest.TestCase):
         np.testing.assert_allclose(diagnostics["coil_images"], np.moveaxis(expected, 0, 1), atol=2e-14)
         np.testing.assert_allclose(image, np.sqrt(np.sum(np.abs(expected)**2, axis=0)), atol=2e-14)
         self.assertEqual(report["method"], "row_separable")
+
+    def test_receiver_explicit_precision_matches_exact_coordinates(self):
+        acq = acquisition()
+        acq["kx_mInv"] += np.arange(4)[:, None] * .03
+        samples = self.complex_values((2, 4, 6))
+        expected = direct_reconstruction(samples, acq)
+        for dtype, tolerance in ((torch.float32, 2e-6), (torch.float64, 2e-14)):
+            with self.subTest(dtype=dtype):
+                diagnostics = {"kspace": np.moveaxis(samples, 0, 1)}
+                image, report = reconstruct_receivers(diagnostics, acq, device="cpu", dtype=dtype)
+                np.testing.assert_allclose(diagnostics["coil_images"],
+                    np.moveaxis(expected, 0, 1), atol=tolerance)
+                self.assertIsInstance(image, np.ndarray)
+                self.assertEqual(report["dtype"], str(dtype))
+                self.assertEqual(report["rounded_or_discarded_samples"], 0)
 
     def b0_fixture(self, path, polarity=-1, echo_count=3):
         ny, nx, ne, receivers = 4, 6, echo_count, 2
@@ -161,6 +180,34 @@ class MeasuredContinuousTests(unittest.TestCase):
             reconstruct_receivers({}, acquisition())
         with self.assertRaisesRegex(ValueError, "sequence_info"):
             reconstruct_b0_echoes({}, "unused.seq")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA device unavailable")
+    def test_cuda_receivers_and_all_32_echoes_match_cpu_at_actual_k(self):
+        acq = acquisition()
+        acq["kx_mInv"] += np.arange(4)[:, None] * .03
+        samples = self.complex_values((2, 4, 6))
+        cpu = {"kspace": np.moveaxis(samples, 0, 1)}
+        cpu_image, _ = reconstruct_receivers(cpu, acq)
+        for dtype, tolerance in ((torch.float32, 2e-6), (torch.float64, 3e-14)):
+            with self.subTest(dtype=dtype), tempfile.TemporaryDirectory() as directory:
+                gpu = {"kspace": np.moveaxis(samples, 0, 1)}
+                image, report = reconstruct_receivers(gpu, acq, device="cuda", dtype=dtype)
+                np.testing.assert_allclose(image, cpu_image, atol=tolerance)
+                np.testing.assert_allclose(gpu["coil_images"], cpu["coil_images"], atol=tolerance)
+                self.assertTrue(report["device"].startswith("cuda"))
+                self.assertEqual(report["dtype"], str(dtype))
+                path = Path(directory) / "32echo.seq"
+                path.write_text("validated GPU echo train", encoding="utf-8")
+                raw, echo_acq, old, sequence = self.b0_fixture(path, echo_count=32)
+                expected = direct_reconstruction(raw["kspace"], echo_acq)
+                with patch.dict("sys.modules", {"pypulseq": SimpleNamespace(Sequence=lambda: sequence)}):
+                    reports = reconstruct_b0_echoes(raw, path, device="cuda", dtype=dtype)
+                np.testing.assert_allclose(raw["coil_images"], expected, atol=tolerance)
+                np.testing.assert_array_equal(raw["native_coil_images"], old)
+                self.assertEqual(len(reports), 32)
+                self.assertTrue(all(r["device"].startswith("cuda") for r in reports))
+                self.assertTrue(all(r["dtype"] == str(dtype) for r in reports))
+                self.assertTrue(all(r["rounded_or_discarded_samples"] == 0 for r in reports))
 
 
 if __name__ == "__main__":

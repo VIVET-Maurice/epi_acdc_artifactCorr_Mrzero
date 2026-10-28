@@ -78,12 +78,17 @@ def _cartesian(kx, ky, times, kind):
     row_order = np.argsort(ky.mean(axis=1))
     kx, ky, times = kx[row_order], ky[row_order], times[row_order]
     step_x = float(np.median(np.diff(kx, axis=1)))
-    step_y = float(np.median(np.diff(ky[:, 0])))
+    phase_indices = np.arange(ny) - ny // 2
+    # Pulseq text rounds each phase-gradient amplitude independently. A median
+    # adjacent difference can then be biased, accumulating an apparent error
+    # across a large matrix. Fit the centered grid globally for validation;
+    # retain the actual k coordinates for reconstruction and simulation.
+    step_y = float(phase_indices @ ky.mean(axis=1) / (phase_indices @ phase_indices))
     offset = float(np.median(kx[:, nx // 2]))
     allowed_offsets = [0, step_x / 2] if kind == "gre" else [0]
     grid_offset = min(allowed_offsets, key=lambda value: abs(value - offset))
     expected_x = (np.arange(nx) - nx // 2) * step_x + grid_offset
-    expected_y = (np.arange(ny) - ny // 2) * step_y
+    expected_y = phase_indices * step_y
     if (step_x <= 0 or step_y <= 0
             or not np.allclose(kx, expected_x[None, :], rtol=0, atol=3e-3) #originally 1e-3
             or not np.allclose(ky, expected_y[:, None], rtol=0, atol=3e-3)):#orginally 1e-3

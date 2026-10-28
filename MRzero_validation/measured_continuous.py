@@ -23,13 +23,14 @@ def _preserve_native(container, names):
             container["native_" + name] = np.array(container[name], copy=True)
 
 
-def reconstruct_receivers(diagnostics, acquisition):
+def reconstruct_receivers(diagnostics, acquisition, *, device="cpu", dtype=torch.float64):
     """Update scan diagnostics and return ``(corrected_RSS, report)``.
 
     The input ``kspace`` and optional ``corrected_kspace`` are already in
     ``[phase, receiver, readout]`` order from ``read_scan``. Coil images keep
     that order. Original reconstructed arrays are retained with ``native_``
     prefixes. This helper requires raw k-space, rather than an image archive.
+    ``device``/``dtype`` select the Fourier operator; results remain NumPy arrays.
     """
     if "kspace" not in diagnostics:
         raise ValueError("Continuous receiver reconstruction requires measured raw kspace.")
@@ -40,7 +41,7 @@ def reconstruct_receivers(diagnostics, acquisition):
             or (raw.shape[0], raw.shape[2]) != shape or raw.shape[1] < 1
             or not np.isfinite(raw).all() or not np.isfinite(corrected).all()):
         raise ValueError("Receiver kspace must be finite [phase, receiver, readout] arrays matching acquisition.")
-    operator = ContinuousReconstruction(acquisition, "cpu", torch.float64)
+    operator = ContinuousReconstruction(acquisition, device, dtype)
     uncorrected_coils = np.moveaxis(operator.numpy_image(np.moveaxis(raw, 1, 0)), 0, 1)
     coils = np.moveaxis(operator.numpy_image(np.moveaxis(corrected, 1, 0)), 0, 1)
     _preserve_native(diagnostics, ("coil_images", "uncorrected_coil_images", "uncorrected_image"))
@@ -52,12 +53,14 @@ def reconstruct_receivers(diagnostics, acquisition):
     report.update({"receiver_count": int(raw.shape[1]),
                    "input_axes": ["phase", "receiver", "readout"],
                    "combination": "RSS after complex reconstruction per receiver",
-                   "receiver_phase_reapplied": False})
+                   "receiver_phase_reapplied": False,
+                   "device": str(operator.device), "dtype": str(operator.dtype),
+                   "complex_dtype": str(operator.complex_dtype)})
     diagnostics["continuous_reconstruction"] = report
     return image, report
 
 
-def reconstruct_b0_echoes(b0_raw, sequence_path):
+def reconstruct_b0_echoes(b0_raw, sequence_path, *, device="cpu", dtype=torch.float64):
     """Replace B0 ``coil_images`` using the validated sequence's actual k.
 
     ``read_b0_coil_images`` supplies k-space in ``[echo, receiver, phase,
@@ -65,7 +68,8 @@ def reconstruct_b0_echoes(b0_raw, sequence_path):
     Pulseq is evaluated once; trajectory samples are reflected and phase rows
     sorted by the same rules as ``read_b0_sequence``. Dummy RF pulses have no
     ADC samples. Return one reconstruction report per echo, retaining original
-    coil images as ``native_coil_images`` for comparison.
+    coil images as ``native_coil_images`` for comparison. ``device``/``dtype``
+    select each echo's Fourier operator; every echo is returned as NumPy data.
     """
     import pypulseq as pp
 
@@ -107,11 +111,13 @@ def reconstruct_b0_echoes(b0_raw, sequence_path):
     for echo in range(ne):
         acquisition = {"kx_mInv": trajectory[0, :, echo],
                        "ky_mInv": trajectory[1, :, echo], "FOV_m": info["FOV_m"]}
-        operator = ContinuousReconstruction(acquisition, "cpu", torch.float64)
+        operator = ContinuousReconstruction(acquisition, device, dtype)
         coils[echo] = operator.numpy_image(data[echo])
         report = dict(operator.report)
         report.update({"echo_index": echo, "receiver_count": receivers,
-                       "sequence_sha256": digest, "receiver_phase_reapplied": False})
+                       "sequence_sha256": digest, "receiver_phase_reapplied": False,
+                       "device": str(operator.device), "dtype": str(operator.dtype),
+                       "complex_dtype": str(operator.complex_dtype)})
         reports.append(report)
     _preserve_native(b0_raw, ("coil_images",))
     b0_raw["coil_images"] = coils

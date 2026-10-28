@@ -276,6 +276,45 @@ class ForwardAndGradientTests(unittest.TestCase):
 
 
 class ConstraintsAndOptimizationTests(unittest.TestCase):
+    def test_disabled_channels_stay_zero_in_every_image_evaluation(self):
+        experiment, calibration = fixture(response=True)
+        disabled = np.array([0, 7, 31])
+        limits = np.full(32, 1.5)
+        limits[disabled] = 0.
+        model = cpu_model(experiment, calibration, max_current_A=limits)
+        np.testing.assert_array_equal(model.maps_numpy, calibration["acdc_maps"])
+        objective = model._objective_tensor
+        evaluated = []
+
+        def check_evaluation(currents, gradient=True):
+            np.testing.assert_array_equal(model.numpy(currents)[disabled], 0.)
+            evaluated.append(model.numpy(currents).copy())
+            return objective(currents, gradient=gradient)
+
+        model._objective_tensor = check_evaluation
+        requested = np.full((32, 3), .01)
+        requested[disabled] = 10.
+        result = optimize_image(model, requested, total_current_limit_A=3.,
+                                field_limit_Hz=100., max_iterations=3)
+        self.assertGreater(len(evaluated), 1)
+        self.assertIsNone(result["requested_initial_relative_mse"])
+        self.assertTrue(result["optimization_info"]["requested_initial_evaluation_skipped_disabled_channels"])
+        np.testing.assert_array_equal(result["requested_initial_currents_A"], requested)
+        np.testing.assert_array_equal(result["initial_currents_A"][disabled], 0.)
+        np.testing.assert_array_equal(result["currents_A"][disabled], 0.)
+        self.assertGreater(np.abs(result["initial_currents_A"]).max(), 0.)
+
+    def test_all_channels_disabled_returns_baseline_without_changing_basis(self):
+        experiment, calibration = fixture(response=True)
+        model = cpu_model(experiment, calibration, max_current_A=0.)
+        baseline, _ = model.forward(np.zeros((32, 3)))
+        result = optimize_image(model, np.ones((32, 3)), total_current_limit_A=3.,
+                                field_limit_Hz=100., max_iterations=3)
+        np.testing.assert_array_equal(result["currents_A"], 0.)
+        np.testing.assert_allclose(result["image"], baseline, atol=0, rtol=0)
+        np.testing.assert_array_equal(model.maps_numpy, calibration["acdc_maps"])
+        self.assertTrue(result["optimization_info"]["accepted"])
+
     def test_box_l1_projection_keeps_saturated_coordinate(self):
         experiment, calibration = fixture()
         model = cpu_model(experiment, calibration, max_current_A=2.)
@@ -516,6 +555,43 @@ class FieldFitTests(unittest.TestCase):
         residual = basis @ result["currents_A"][:, 0] - target
         self.assertAlmostEqual(result["loss"], np.mean(residual**2), places=12)
         self.assertAlmostEqual(result["nrmse"], np.linalg.norm(residual) / np.linalg.norm(target), places=12)
+
+    def test_disabled_channels_match_independent_fit_on_remaining_basis(self):
+        rng = np.random.default_rng(179)
+        basis = rng.normal(size=(17, 4))
+        original = basis.copy()
+        active = np.array([0, 2])
+        target = basis @ np.array([.3, .5, -.2, -.4])
+        result = self.solve(basis, target, max_current_A=[5., 0., 5., 0.],
+                            initial_currents_A=np.ones((4, 1)))
+        expected = np.linalg.lstsq(basis[:, active], target, rcond=None)[0]
+        np.testing.assert_allclose(result["currents_A"][active, 0], expected, atol=1e-8, rtol=0)
+        np.testing.assert_array_equal(result["currents_A"][[1, 3]], 0.)
+        np.testing.assert_array_equal(basis, original)
+        residual = basis[:, active] @ expected - target
+        self.assertAlmostEqual(result["loss"], np.mean(residual**2), places=12)
+
+    def test_dynamic_disabled_channels_and_all_disabled_are_exactly_zero(self):
+        basis = np.array([[3., 1.], [-1., 2.], [2., -.5], [.5, 1.5]])
+        target = basis @ np.array([.3, -.2])
+        starts = np.array([0., 80e-6, 160e-6])
+        ends = np.r_[starts[1:], 240e-6]
+        times = np.linspace(5e-6, 235e-6, 19)
+        _, response = response_matrices(starts, ends, times, [25e-6, 70e-6])
+        result = self.solve(basis, target, response=response, max_current_A=[5., 0.],
+                            initial_currents_A=np.ones((2, 3)))
+        reduced = self.solve(basis[:, :1], target, response=response[:1],
+                             initial_currents_A=np.ones((1, 3)))
+        np.testing.assert_allclose(result["currents_A"][:1], reduced["currents_A"], atol=3e-5, rtol=0)
+        actual = np.einsum("cts,cs->ct", response, result["currents_A"])
+        np.testing.assert_array_equal(actual[1], 0.)
+        self.assertGreater(np.abs(actual[0]).max(), 0.)
+        for dynamic in (None, response):
+            with self.subTest(dynamic=dynamic is not None):
+                off = self.solve(basis, target, response=dynamic, max_current_A=0.)
+                np.testing.assert_array_equal(off["currents_A"], 0.)
+                self.assertAlmostEqual(off["loss"], np.mean(target**2), places=12)
+                self.assertTrue(np.isfinite(off["loss"]))
 
     def test_ridge_units_match_closed_form_physical_objective(self):
         rng = np.random.default_rng(19)

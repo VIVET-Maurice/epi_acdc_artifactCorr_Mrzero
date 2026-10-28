@@ -22,7 +22,7 @@ SKIP_DIRS = {"__pycache__", ".git", "tmp", "pipeline_validation", "simulation_me
 
 def source_files():
     for path in ROOT.iterdir():
-        if path.is_file() and (path.suffix in SUFFIXES or path.name in {".gitignore", ".gitattributes"}
+        if path.is_file() and (path.suffix in SUFFIXES or path.name in {".gitignore", ".gitattributes", "LICENSE"}
                                or path.name.startswith("requirements") and path.suffix == ".txt"):
             yield path
     for name in CODE_DIRS:
@@ -34,7 +34,7 @@ def source_files():
                                and not name.startswith((".venv", "results", "acquisition_synthetic", "_audit_twix_"))]
             for name in names:
                 path = Path(current) / name
-                if path.suffix in SUFFIXES or path.name.startswith("requirements") and path.suffix == ".txt":
+                if path.name == "LICENSE" or path.suffix in SUFFIXES or path.name.startswith("requirements") and path.suffix == ".txt":
                     yield path
     for path in sorted(ROOT.glob("acquisition_*/sequences/*.seq")):
         if path.is_file():

@@ -17,7 +17,8 @@ import torch
 def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit_A=30.0,
                    field_limit_Hz=500.0, max_iterations=150, learning_rate_A=0.01,
                    target_mse=None, patience=25, min_relative_improvement=1e-6,
-                   callback=None, callback_every=1, use_cuda_graph=False):
+                   callback=None, callback_every=1, use_cuda_graph=False,
+                   field_guidance_weight=0.0, field_guidance_scale_Hz=100.0):
     """Optimize native MRzero images and report selected evaluated candidates.
 
     ``callback(snapshot)`` runs at zero, every ``callback_every`` iterations,
@@ -34,6 +35,16 @@ def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit
     Adam is a local optimizer: the returned feasible point can be useful after
     an iteration limit without implying mathematical convergence. History
     reports evaluated values and best values separately.
+
+    ``field_guidance_weight > 0`` adds an explicit, unwrapped B0 residual
+    penalty to the optimization objective. It uses the physical current
+    response between successive EPI line centers; the forward image model is
+    unchanged. ``fval`` and ``best_fval`` remain image MSE (the latter is the
+    lowest image MSE seen), while ``objective`` and ``best_objective`` report
+    the combined objective used to select the returned candidate. In guided
+    mode ``target_mse`` is reported but does not stop optimization: an aliased
+    image can match the reference before its physical B0 error is corrected.
+    A zero guidance weight preserves the original optimization exactly.
     """
     if (isinstance(max_iterations, bool) or int(max_iterations) != max_iterations or max_iterations < 1
             or isinstance(patience, bool) or int(patience) != patience or patience < 1):
@@ -49,20 +60,40 @@ def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit
         raise ValueError("callback_every must be a positive integer.")
     if not isinstance(use_cuda_graph, bool):
         raise ValueError("use_cuda_graph must be True or False.")
+    if (isinstance(field_guidance_weight, (bool, np.bool_))
+            or not np.isfinite(field_guidance_weight) or field_guidance_weight < 0):
+        raise ValueError("field_guidance_weight must be finite and nonnegative.")
+    if (isinstance(field_guidance_scale_Hz, (bool, np.bool_))
+            or not np.isfinite(field_guidance_scale_Hz) or field_guidance_scale_Hz <= 0):
+        raise ValueError("field_guidance_scale_Hz must be finite and positive.")
+    field_guidance_weight = float(field_guidance_weight)
+    guidance = None
+    if field_guidance_weight > 0:
+        from field_guidance import FieldGuidance
+        guidance = FieldGuidance(model, scale_Hz=float(field_guidance_scale_Hz))
+    target_stop_enabled = target_mse is not None and guidance is None
     from cuda_graph_helpers import GpuEvaluation
     evaluator = GpuEvaluation(model, total_current_limit_A, field_limit_Hz,
                               enabled=use_cuda_graph)
     if initial_currents_A is None:
         initial_currents_A = np.zeros((model.nc, model.nstates))
     requested = model._check_currents(initial_currents_A)
-    requested_value = float(model._objective_tensor(requested, gradient=False)[0])
+    requested_disabled = bool(((model.max_current_A == 0)[:, None] & (requested != 0)).any())
+    # Retain the user's requested array without evaluating impossible commands
+    # on disabled channels, including the pre-projection diagnostic.
+    requested_value = (None if requested_disabled else
+                       float(model._objective_tensor(requested, gradient=False)[0]))
     currents = evaluator.project(requested)
     initial = currents.clone()
     best = currents.clone()
     best_value = np.inf
+    best_image_value = np.inf
     moment, variance = torch.zeros_like(currents), torch.zeros_like(currents)
     learning_rate = float(learning_rate_A)
     history = {name: [] for name in ("iteration", "fval", "best_fval", "firstorderopt", "constrviolation", "learning_rate_A", "elapsed_s")}
+    if guidance is not None:
+        history.update({name: [] for name in (
+            "objective", "best_objective", "field_penalty", "residual_field_rms_Hz")})
     stale, reductions, adam_step = 0, 0, 0
     callback_seconds = 0.0
     status, converged = "iteration_limit", False
@@ -71,25 +102,35 @@ def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit
     started = time.perf_counter()
     for iteration in range(int(max_iterations) + 1):
         value_tensor, gradient, candidate_image, _ = evaluator.evaluate(currents)
-        value = float(value_tensor)
+        image_value = float(value_tensor)
+        if guidance is not None:
+            field_penalty, field_gradient, field_rms = guidance.value_gradient(currents)
+            value_tensor = value_tensor + field_guidance_weight * field_penalty
+            gradient = gradient + field_guidance_weight * field_gradient
+        value = float(value_tensor) if guidance is not None else image_value
         if not np.isfinite(value) or not bool(torch.isfinite(gradient).all()):
             status = "nonfinite_evaluation"
             break
         previous_best = best_value
         if value < best_value:
             best_value, best = value, currents.clone()
+        best_image_value = min(best_image_value, image_value)
         significant = not np.isfinite(previous_best) or value < previous_best - min_relative_improvement * max(previous_best, 1e-12)
         stale = 0 if significant else stale + 1
         projected_step = currents - evaluator.project(currents - gradient)
         first_order = float(projected_step.abs().max())
         elapsed = time.perf_counter() - started
-        row = {"iteration": iteration, "fval": value, "best_fval": best_value,
+        row = {"iteration": iteration, "fval": image_value, "best_fval": best_image_value,
                "firstorderopt": first_order, "constrviolation": 0.0,
                "learning_rate_A": learning_rate, "elapsed_s": elapsed}
+        if guidance is not None:
+            row.update(objective=value, best_objective=best_value,
+                       field_penalty=float(field_penalty),
+                       residual_field_rms_Hz=float(field_rms))
         for key, item in row.items():
             history[key].append(item)
         terminal = (iteration == max_iterations
-                    or (target_mse is not None and best_value <= target_mse)
+                    or (target_stop_enabled and best_value <= target_mse)
                     or first_order < (1e-7 if model.dtype == torch.float64 else 1e-6)
                     or (stale >= patience and reductions >= 3))
         if callback is not None and (iteration % callback_every == 0 or terminal):
@@ -101,12 +142,13 @@ def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit
                 max_field_Hz=float((model.B_quality @ currents).abs().max()),
                 max_channel_current_A=float(currents.abs().max()),
                 max_total_current_A=float(currents.abs().sum(dim=0).max()),
-                history={"iteration": np.asarray(history["iteration"]).copy(),
-                         "fval": np.asarray(history["fval"]).copy()},
+                history={key: np.asarray(history[key]).copy() for key in
+                         (("iteration", "fval", "objective", "best_objective", "field_penalty",
+                           "residual_field_rms_Hz") if guidance is not None else ("iteration", "fval"))},
             )
             callback(snapshot)
             callback_seconds += time.perf_counter() - callback_started
-        if target_mse is not None and best_value <= target_mse:
+        if target_stop_enabled and best_value <= target_mse:
             status, converged = "target_mse", True
             break
         if first_order < (1e-7 if model.dtype == torch.float64 else 1e-6):
@@ -162,11 +204,32 @@ def optimize_mrzero_image(model, initial_currents_A=None, *, total_current_limit
             "native_baseline_cache": model.runtime_info.get("native_baseline_cache"),
             "cuda_graph": evaluator.report,
             "initial_was_projected": not np.array_equal(initial_used, model.numpy(requested)),
+            "requested_initial_evaluation_skipped_disabled_channels": requested_disabled,
+            "field_guidance_weight": field_guidance_weight,
+            "field_guidance_scale_Hz": float(field_guidance_scale_Hz),
             "algorithm": "projected Adam; box/L1 projection and radial field contraction"}
+    if guidance is not None:
+        final_penalty, _, final_rms = guidance.value_gradient(best, gradient=False)
+        info.update(
+            objective=float(final_value + field_guidance_weight * final_penalty),
+            field_penalty=float(final_penalty),
+            residual_field_rms_Hz=float(final_rms),
+            field_guidance={**guidance.report,
+                "weight": field_guidance_weight,
+                "initial_field_penalty": history["field_penalty"][0],
+                "initial_residual_field_rms_Hz": history["residual_field_rms_Hz"][0],
+                "final_field_penalty": float(final_penalty),
+                "final_residual_field_rms_Hz": float(final_rms)},
+            target_mse_stopping_enabled=False,
+            target_mse_stopping_reason="Image MSE alone cannot distinguish a physically wrapped field branch.",
+            selection_objective="image MSE + field_guidance_weight * field_penalty",
+            best_image_relative_mse=best_image_value,
+        )
     return {"currents_A": commands, "initial_currents_A": initial_used,
             "requested_initial_currents_A": model.numpy(requested),
             "requested_initial_relative_mse": requested_value,
             "initial_relative_mse": history["fval"][0],
+            "initial_objective": history["objective"][0] if guidance is not None else history["fval"][0],
             "reference": model.reference, "image": model.numpy(image), "kdata": model.numpy(kdata),
             "generated_field_Hz": fields, "field_limit_Hz": field_limit_Hz,
             "current_response": model.current_response,

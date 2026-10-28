@@ -10,14 +10,19 @@ from scipy.ndimage import correlate
 
 
 def regularize_b0_local_plane(b0_Hz, valid_mask, *, sigma_pixels=.75,
-                             truncate=3., spacing_mm=None, preserve_mean=True):
+                             truncate=3., spacing_mm=None, preserve_mean=True,
+                             weights=None):
     """Return raw/regularized fields, unchanged coverage and an explicit report.
 
     Fit ``a + b*dr + c*dc`` to finite measured neighbors using a Gaussian
     window. The value at the window center is ``a``. Pixels outside the input
-    mask keep their original value, including NaNs. Singular neighborhoods
+    mask keep their original value, including NaNs. Optional nonnegative
+    ``weights`` express independently measured relative phase precision, not
+    an image-fitting parameter. Singular neighborhoods
     also keep their raw value. Optional mean preservation adds one common
     offset to successfully fitted pixels only, leaving singular pixels intact.
+    The fitted row/column slopes are returned in Hz per full native pixel;
+    missing or singular gradients remain NaN and are explicitly masked.
     ``spacing_mm`` is row/column spacing, used for reporting the bandwidth.
     """
     raw = np.asarray(b0_Hz, dtype=float)
@@ -40,6 +45,15 @@ def regularize_b0_local_plane(b0_Hz, valid_mask, *, sigma_pixels=.75,
     valid = mask.astype(bool) & np.isfinite(raw)
     if not valid.any():
         raise ValueError("No finite valid measured B0 pixels remain.")
+    precision = valid.astype(float)
+    if weights is not None:
+        supplied = np.asarray(weights)
+        if (supplied.shape != raw.shape or np.iscomplexobj(supplied)
+                or not np.isfinite(supplied[valid]).all()
+                or np.any(supplied[valid] < 0) or not np.any(supplied[valid] > 0)):
+            raise ValueError("weights must be real, finite and nonnegative on measured B0, with positive mass.")
+        precision = np.where(valid, supplied, 0.).astype(float)
+        precision /= precision.max()
     radius = np.maximum(1, np.ceil(truncate * sigma).astype(int))
     dr, dc = np.meshgrid(np.arange(-radius[0], radius[0] + 1),
                          np.arange(-radius[1], radius[1] + 1), indexing="ij")
@@ -50,17 +64,20 @@ def regularize_b0_local_plane(b0_Hz, valid_mask, *, sigma_pixels=.75,
     matrix = np.empty(raw.shape + (3, 3))
     rhs = np.empty(raw.shape + (3,))
     for row in range(3):
-        rhs[..., row] = correlate(measured, window * design[row], mode="constant", cval=0.)
+        rhs[..., row] = correlate(precision * measured, window * design[row], mode="constant", cval=0.)
         for column in range(row, 3):
-            moment = correlate(valid.astype(float), window * design[row] * design[column],
+            moment = correlate(precision, window * design[row] * design[column],
                                mode="constant", cval=0.)
             matrix[..., row, column] = moment
             matrix[..., column, row] = moment
     eigenvalues = np.linalg.eigvalsh(matrix)
     fitted = valid & (eigenvalues[..., 0] > 1e-10 * eigenvalues[..., -1])
     output = raw.copy()
+    gradient = np.full(raw.shape + (2,), np.nan)
     if fitted.any():
-        output[fitted] = np.linalg.solve(matrix[fitted], rhs[fitted, :, None])[:, 0, 0]
+        coefficients = np.linalg.solve(matrix[fitted], rhs[fitted, :, None])[..., 0]
+        output[fitted] = coefficients[:, 0]
+        gradient[fitted] = coefficients[:, 1:]
     mean_before = float(raw[valid].mean())
     mean_offset = 0.
     if preserve_mean and fitted.any():
@@ -81,10 +98,17 @@ def regularize_b0_local_plane(b0_Hz, valid_mask, *, sigma_pixels=.75,
         "mean_restoring_offset_Hz": mean_offset,
         "RMS_change_Hz": float(np.sqrt(np.mean(change[valid]**2))),
         "max_abs_change_Hz": float(np.max(abs(change[valid]))),
+        "weighting": "uniform measured samples" if weights is None else "supplied relative phase precision, normalized by its measured maximum",
+        "positive_weight_pixels": int(np.sum(valid & (precision > 0))),
+        "gradient_units": "Hz per full native row/column pixel",
+        "gradient_valid_pixels": int(fitted.sum()),
+        "gradient_missing_policy": "NaN outside measured coverage or at singular local fits; never assume zero.",
         "bandwidth_selection": "Fixed in native pixels; no EPI image or optimization result is used.",
         "coverage_policy": "Only finite pixels in the original mask are fitted; no interpolation outside measured coverage."}
     return {"b0Hz": output, "mask": valid, "raw_b0Hz": raw.copy(),
-            "change_Hz": change, "fitted_mask": fitted, "report": report}
+            "change_Hz": change, "fitted_mask": fitted,
+            "gradient_Hz_per_pixel": gradient, "gradient_valid_mask": fitted.copy(),
+            "report": report}
 
 
 __all__ = ["regularize_b0_local_plane"]

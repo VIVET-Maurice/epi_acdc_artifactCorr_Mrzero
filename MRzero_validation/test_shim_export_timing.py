@@ -18,6 +18,7 @@ from shim_export_timing import sequence_trigger_timing, waveform_edges_for_origi
 
 
 SEQUENCE = ROOT / 'acquisition_015/sequences/gre_epi_64x64_fov200mm_nav3_rise1ms_ext1_single_trigger_first_readout_v4.seq'
+LINE_SEQUENCE = ROOT / 'acquisition_024_(06)/sequences/gre_epi_64x64_fov200mm_nav3_cimax_snr_t2star40ms_line_triggers_v6.seq'
 
 
 def windows():
@@ -85,6 +86,11 @@ class ExportOriginTests(unittest.TestCase):
             with patch('pypulseq.Sequence', return_value=sequence):
                 result = sequence_trigger_timing(path, timing)
                 self.assertAlmostEqual(result['trigger_rf_s'], .019)
+                self.assertEqual(result['mode'], 'single_trigger')
+                self.assertEqual(result['trigger_count'], 1)
+                np.testing.assert_allclose(result['trigger_times_rf_s'], [.019])
+                self.assertEqual(result['trigger_state_indices'], [0])
+                self.assertFalse(result['verified_per_line_triggers'])
                 self.assertTrue(result['verified_first_imaging_trigger'])
                 self.assertFalse(result['hardware_latency_measured'])
                 event.delay = 2e-6
@@ -92,10 +98,109 @@ class ExportOriginTests(unittest.TestCase):
                     sequence_trigger_timing(path, timing)
                 event.delay = 0.
                 blocks[2].trigger[2] = event
-                with self.assertRaisesRegex(ValueError, 'exactly one'):
+                with self.assertRaises(ValueError):
                     sequence_trigger_timing(path, timing)
                 with self.assertRaisesRegex(ValueError, 'changed'):
                     sequence_trigger_timing(path, dict(timing, sequence_sha256='wrong'))
+
+
+class ImagingLineTriggerTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory(prefix='shim_line_triggers_')
+        self.addCleanup(folder.cleanup)
+        directory = Path(folder.name).resolve()
+        self.assertTrue(directory.is_relative_to(Path(tempfile.gettempdir()).resolve()))
+        self.path = directory / 'example.seq'
+        self.original = b'mock sequence content with a complete trigger train'
+        self.path.write_bytes(self.original)
+        self.starts, _ = windows()
+        self.timing = dict(sequence_kind='epi', rf_center_s=.001,
+                           state_start_s=self.starts.tolist())
+
+    def verify(self, times, *, timing=None, other_events=()):
+        events = [SimpleNamespace(type='output', channel='ext1',
+                    delay=float(time) + .001, duration=1e-5) for time in times]
+        events.extend(other_events)
+        block = SimpleNamespace(trigger=dict(enumerate(events, start=1)))
+        sequence = SimpleNamespace(block_durations={1: .4},
+            get_block=lambda number: block, read=lambda value: None)
+        with patch('pypulseq.Sequence', return_value=sequence):
+            return sequence_trigger_timing(self.path,
+                self.timing if timing is None else timing)
+
+    def test_each_of_64_imaging_starts_has_a_verified_trigger(self):
+        result = self.verify(self.starts)
+        self.assertEqual(result['mode'], 'per_line')
+        self.assertEqual(result['trigger_count'], 64)
+        self.assertTrue(result['verified_per_line_triggers'])
+        self.assertTrue(result['verified_first_imaging_trigger'])
+        self.assertEqual(result['trigger_state_indices'], list(range(64)))
+        np.testing.assert_allclose(result['trigger_times_rf_s'], self.starts,
+                                   rtol=0, atol=1e-16)
+        np.testing.assert_allclose(result['trigger_times_sequence_s'], self.starts + .001,
+                                   rtol=0, atol=1e-16)
+        self.assertLessEqual(result['maximum_trigger_alignment_error_s'],
+                             result['trigger_alignment_tolerance_s'])
+        self.assertAlmostEqual(result['trigger_rf_s'], self.starts[0])
+        self.assertAlmostEqual(result['trigger_sequence_s'], self.starts[0] + .001)
+        self.assertFalse(result['hardware_latency_measured'])
+        self.assertEqual(self.path.read_bytes(), self.original)
+
+    def test_single_first_imaging_trigger_remains_valid_for_64_states(self):
+        result = self.verify(self.starts[:1])
+        self.assertEqual(result['mode'], 'single_trigger')
+        self.assertEqual(result['trigger_count'], 1)
+        self.assertFalse(result['verified_per_line_triggers'])
+        self.assertEqual(result['trigger_state_indices'], [0])
+
+    def test_missing_or_additional_line_triggers_are_rejected(self):
+        for times in ([], self.starts[:-1], np.r_[self.starts, self.starts[-1] + .00271]):
+            with self.subTest(count=len(times)), self.assertRaises(ValueError):
+                self.verify(times)
+
+    def test_duplicate_or_misaligned_internal_triggers_are_rejected(self):
+        for shift in ('duplicate', 'late'):
+            times = self.starts.copy()
+            times[31] = times[30] if shift == 'duplicate' else times[31] + 2e-6
+            with self.subTest(error=shift), self.assertRaises(ValueError):
+                self.verify(times)
+
+    def test_sub_nanosecond_clock_rounding_is_accepted_and_reported(self):
+        times = self.starts.copy()
+        times[31] += .5e-9
+        result = self.verify(times)
+        self.assertTrue(result['verified_per_line_triggers'])
+        self.assertAlmostEqual(result['maximum_trigger_alignment_error_s'], .5e-9,
+                               delta=1e-16)
+
+    def test_navigator_trigger_cannot_be_used_as_the_imaging_origin(self):
+        with self.assertRaises(ValueError):
+            self.verify(np.r_[self.starts[0] - .00271, self.starts])
+        # Even a count of 64 is insufficient when the first output is earlier
+        # and the final imaging line has no corresponding output.
+        with self.assertRaises(ValueError):
+            self.verify(np.r_[self.starts[0] - .00271, self.starts[:-1]])
+
+    def test_other_channels_and_input_events_do_not_count_as_ext1_outputs(self):
+        other_events = [
+            SimpleNamespace(type='output', channel='ext2', delay=.002, duration=1e-5),
+            SimpleNamespace(type='trigger', channel='ext1', delay=.002, duration=1e-5),
+        ]
+        result = self.verify(self.starts, other_events=other_events)
+        self.assertEqual(result['trigger_count'], 64)
+        self.assertEqual(len(result['output_events']), 65)
+
+    def test_invalid_imaging_clock_is_rejected(self):
+        for reason in ('nonfinite', 'repeated', 'decreasing'):
+            starts = self.starts.copy()
+            if reason == 'nonfinite':
+                starts[12] = np.nan
+            elif reason == 'repeated':
+                starts[12] = starts[11]
+            else:
+                starts[11:13] = starts[11:13][::-1]
+            with self.subTest(error=reason), self.assertRaises(ValueError):
+                self.verify(self.starts, timing=dict(self.timing, state_start_s=starts))
 
 
 @unittest.skipUnless(SEQUENCE.is_file(), 'Actual acquisition_015 sequence is unavailable')
@@ -127,6 +232,31 @@ class ActualSequenceCSVTests(unittest.TestCase):
             np.testing.assert_array_equal(csv[-1, 1:], np.zeros(32))
             self.assertGreater(np.diff(csv[:, 0]).min(), 8e-6)
             self.assertTrue(report['zero_time_column_must_be_false'])
+
+
+@unittest.skipUnless(LINE_SEQUENCE.is_file(), 'Actual 64-line-trigger sequence is unavailable')
+class ActualLineTriggerSequenceTests(unittest.TestCase):
+    def test_real_64_trigger_sequence_uses_first_imaging_trigger_as_origin(self):
+        original = LINE_SEQUENCE.read_bytes()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            acquisition, timing = read_sequence(LINE_SEQUENCE)
+            trigger = sequence_trigger_timing(LINE_SEQUENCE, timing)
+        self.assertEqual(trigger['mode'], 'per_line')
+        self.assertEqual(trigger['trigger_count'], 64)
+        self.assertTrue(trigger['verified_per_line_triggers'])
+        self.assertTrue(trigger['verified_first_imaging_trigger'])
+        self.assertEqual(trigger['trigger_state_indices'], list(range(64)))
+        np.testing.assert_allclose(trigger['trigger_times_rf_s'],
+                                   timing['state_start_s'], rtol=0, atol=1e-12)
+        self.assertAlmostEqual(trigger['trigger_rf_s'], .00421)
+        edges, report = waveform_edges_for_origin(acquisition['line_start_s'],
+            acquisition['line_end_s'], trigger_rf_s=trigger['trigger_rf_s'])
+        self.assertEqual(edges[0], 0.)
+        self.assertEqual(report['command_state_count'], 64)
+        self.assertEqual(edges.size, 65)
+        self.assertGreater(np.diff(edges).min(), 8e-6)
+        self.assertEqual(LINE_SEQUENCE.read_bytes(), original)
 
 
 if __name__ == '__main__':

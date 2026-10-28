@@ -123,6 +123,34 @@ class WaveformPlotTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'trigger_rf_s'):
                 waveform_plot_data(self.model, self.commands, origin='first_imaging_trigger')
 
+    def test_first_nonzero_export_keeps_model_alignment_with_recorded_clock_shift(self):
+        commands = self.commands.copy()
+        commands[:, 0] = 0
+        settings = dict(channel_map=[5, 8], channel_polarity=[1, -1],
+                        max_current_A=3., total_current_limit_A=30.)
+        edges = np.r_[self.model.line_start_s, self.model.line_end_s[-1]] - .010
+        with tempfile.TemporaryDirectory(prefix='waveform_plot_rebased_') as folder:
+            exported = export_waveform(commands, edges, settings, folder,
+                                       start_at_first_nonzero=True)
+            options = dict(channel_map=[5, 8], channel_polarity=[1, -1],
+                csv_file=exported['csv_file'],
+                csv_origin_rf_s=.010 + exported['time_origin_shift_s'],
+                csv_leading_zero_states=exported['leading_zero_states'])
+            data = waveform_plot_data(self.model, commands, **options)
+            np.testing.assert_allclose(data['csv']['time_s'], [0., .002, .004], atol=1e-15)
+            np.testing.assert_allclose(data['csv']['time_ms'], [12., 14., 16.], atol=1e-12)
+            self.assertTrue(data['report']['csv_commands_match_within_0p6mA'])
+            self.assertTrue(data['report']['csv_model_event_times_match_within_1ns'])
+            self.assertEqual(data['report']['csv_leading_zero_states'], 1)
+            # Forgetting the recorded shift must remain detectable.
+            options['csv_origin_rf_s'] = .010
+            wrong = waveform_plot_data(self.model, commands, **options)
+            self.assertFalse(wrong['report']['csv_commands_match_within_0p6mA'])
+            self.assertFalse(wrong['report']['csv_model_event_times_match_within_1ns'])
+            options['csv_leading_zero_states'] = 2
+            with self.assertRaisesRegex(ValueError, 'omitted initial all-zero'):
+                waveform_plot_data(self.model, commands, **options)
+
 
 if __name__ == '__main__':
     unittest.main()

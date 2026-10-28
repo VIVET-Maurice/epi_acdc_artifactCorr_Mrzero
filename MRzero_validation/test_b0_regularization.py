@@ -75,6 +75,46 @@ class LocalPlaneB0Tests(unittest.TestCase):
         np.testing.assert_allclose(result["b0Hz"], measured, atol=1e-12)
         np.testing.assert_allclose(result["report"]["sigma_mm_row_column"], [.75, 2.4])
 
+    def test_weighted_affine_field_returns_exact_native_slopes_without_filling_holes(self):
+        row, column = np.indices((20, 25))
+        measured = 17 + 1.3 * row - .7 * column
+        mask = ((row - 10)**2 + (column - 12)**2 < 9**2)
+        mask[8:11, 12:15] = False
+        precision = np.exp(.1 * row - .03 * column)
+        result = regularize_b0_local_plane(measured, mask, weights=precision, sigma_pixels=1.)
+        good = result["gradient_valid_mask"]
+        np.testing.assert_allclose(result["b0Hz"][mask], measured[mask], atol=2e-12)
+        np.testing.assert_allclose(result["gradient_Hz_per_pixel"][good],
+                                   np.broadcast_to([1.3, -.7], (good.sum(), 2)), atol=1e-12)
+        self.assertTrue(np.isnan(result["gradient_Hz_per_pixel"][~mask]).all())
+        np.testing.assert_array_equal(result["b0Hz"][~mask], measured[~mask])
+
+    def test_independent_low_precision_measurement_has_less_influence_and_weight_scale_cancels(self):
+        measured = np.zeros((21, 21))
+        measured[10, 10] = 150.
+        precision = np.ones(measured.shape)
+        precision[10, 10] = .001
+        mask = np.ones(measured.shape, bool)
+        uniform = regularize_b0_local_plane(measured, mask, sigma_pixels=1.)
+        weighted = regularize_b0_local_plane(measured, mask, sigma_pixels=1., weights=precision)
+        scaled = regularize_b0_local_plane(measured, mask, sigma_pixels=1., weights=precision * 1e9)
+        self.assertLess(np.linalg.norm(weighted["b0Hz"]), .2 * np.linalg.norm(uniform["b0Hz"]))
+        np.testing.assert_allclose(scaled["b0Hz"], weighted["b0Hz"], atol=1e-12)
+        self.assertAlmostEqual(weighted["b0Hz"].mean(), measured.mean(), places=12)
+
+    def test_invalid_precision_rejected_and_singular_gradient_remains_unknown(self):
+        field, mask = np.ones((8, 8)), np.ones((8, 8), bool)
+        for precision in (np.ones((3, 3)), -np.ones((8, 8)), np.zeros((8, 8)),
+                          np.full((8, 8), np.nan), np.ones((8, 8), complex)):
+            with self.subTest(precision=precision.shape), self.assertRaisesRegex(ValueError, "weights"):
+                regularize_b0_local_plane(field, mask, weights=precision)
+        mask[:] = False
+        mask[4, 4] = True
+        result = regularize_b0_local_plane(field, mask, weights=np.ones((8, 8)))
+        self.assertFalse(result["gradient_valid_mask"].any())
+        self.assertTrue(np.isnan(result["gradient_Hz_per_pixel"]).all())
+        self.assertEqual(result["b0Hz"][4, 4], 1.)
+
 
 if __name__ == "__main__":
     unittest.main()

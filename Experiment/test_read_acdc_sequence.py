@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 from scipy.io import loadmat
 
-from read_acdc_sequence import read_sequence
+from read_acdc_sequence import _cartesian, read_sequence
 
 
 ROOT = Path(__file__).resolve().parent
@@ -115,6 +115,47 @@ class SequenceReaderTests(unittest.TestCase):
         self.assertAlmostEqual(report["readout_grid_offset_mInv"], 2.5)
         self.assertAlmostEqual(acquisition["TE_s"], .006)
         self.assertAlmostEqual(acquisition["time_s"][0, 4], .00601)
+
+    def test_rounded_phase_gradients_do_not_accumulate_a_false_grid_error(self):
+        # Text-rounded gradient amplitudes perturb individual phase positions,
+        # so the median adjacent difference can be biased across a large matrix.
+        size = 128
+        index = np.arange(size) - size // 2
+        kx = np.broadcast_to(4.0 * index[None, :], (size, size)).copy()
+        rounding = -7e-5 * ((index + 3) % 7 - 3)
+        ky = np.broadcast_to((4.0 * index + rounding)[:, None], (size, size)).copy()
+        times = np.arange(size * size, dtype=float).reshape(size, size) * 1e-5
+        biased_step = np.median(np.diff(ky[:, 0]))
+        self.assertGreater(np.max(np.abs(ky - (index * biased_step)[:, None])), 3e-3)
+        self.assertLess(np.max(np.abs(rounding)), 1e-3)
+
+        actual = _cartesian(kx.copy(), ky.copy(), times.copy(), "gre")
+
+        # Validation must retain every sampled coordinate, including its small
+        # serialization error, instead of snapping it onto the fitted grid.
+        np.testing.assert_array_equal(actual[0], kx)
+        np.testing.assert_array_equal(actual[1], ky)
+        np.testing.assert_array_equal(actual[2], times)
+        np.testing.assert_allclose(actual[5], [.25, .25], rtol=1e-5)
+
+    def test_phase_grid_fit_retains_centering_and_non_cartesian_checks(self):
+        size = 128
+        index = np.arange(size) - size // 2
+        kx = np.broadcast_to(4.0 * index[None, :], (size, size)).copy()
+        ky = np.broadcast_to(4.0 * index[:, None], (size, size)).copy()
+        times = np.arange(size * size, dtype=float).reshape(size, size) * 1e-5
+        missing_line = ky.copy()
+        missing_line[-1] += 4.0
+        during_readout = ky + .01 * index[None, :]
+        # A real offset just beyond the existing absolute tolerance must still
+        # fail, even though it is tiny relative to the outer k-space positions.
+        shifted = ky + .004
+        for name, invalid in (("missing phase line", missing_line),
+                              ("phase gradient during ADC", during_readout),
+                              ("off-center phase grid", shifted)):
+            with self.subTest(trajectory=name):
+                with self.assertRaisesRegex(ValueError, "Cartesian grid"):
+                    _cartesian(kx.copy(), invalid.copy(), times.copy(), "gre")
 
     def test_adc_phase_is_retained_in_forward_model_convention(self):
         acquisition, _ = read_sequence(self.fixture(adc_phase_difference=.3))

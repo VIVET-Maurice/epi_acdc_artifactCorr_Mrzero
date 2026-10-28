@@ -1,5 +1,7 @@
-# Experimental Twix/Pulseq readers used by notebook 03.
+# Experimental readers and field-shim solvers for notebooks 03–06.
 -r requirements.txt
 pydicom>=2.4,<4
 twixtools==0.24
 pypulseq==1.5.0.post1
+quadprog>=0.1.8,<0.2
+tqdm>=4.60,<5

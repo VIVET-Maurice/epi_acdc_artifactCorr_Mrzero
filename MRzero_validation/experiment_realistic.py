@@ -13,6 +13,7 @@ import torch
 from acdc_hardware import HardwareConstraints
 from continuous_reconstruction import ContinuousReconstruction
 from experiment_mrzero import MRzeroExperimentModel
+from measured_image_target import magnitude_objective_terms
 
 
 class RealisticACDCModel(MRzeroExperimentModel):
@@ -57,15 +58,9 @@ class RealisticACDCModel(MRzeroExperimentModel):
         retain = gradient and self._retain_contributions
         output = self._forward_tensor(currents, retain=retain)
         image, kdata = output[:2]
-        amplitude = image.abs()
-        residual = amplitude - self._reference_amplitude
-        value = residual.square().sum() / self._reference_energy
+        value, derivative = magnitude_objective_terms(self, image, gradient=gradient)
         if not gradient:
             return value, image, kdata
-
-        derivative = 2 * residual * image / amplitude.clamp_min(
-            torch.finfo(self.dtype).tiny)
-        derivative /= self._reference_energy
         adjoint = self.reconstruction.adjoint(derivative).reshape(-1)
 
         result = torch.zeros_like(currents)

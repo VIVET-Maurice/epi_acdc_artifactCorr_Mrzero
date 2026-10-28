@@ -22,13 +22,18 @@ def _finite_scalar(value, name):
 
 
 def sequence_trigger_timing(sequence_path, timing, channel='ext1'):
-    """Verify one requested output trigger at the first imaging-command start.
+    """Verify a first-imaging trigger or one trigger per imaging command.
 
     ``timing`` is the report returned by ``read_acdc_sequence.read_sequence``.
     Trigger time is measured from actual Pulseq block durations and event
     delays, then expressed relative to that report's first RF center. A file
     hash, when available in timing, must agree. The first imaging trigger is
     never inferred just from the current-window start or the sequence name.
+    A train of triggers is accepted when every imaging-command start has
+    exactly one matching event. The first event defines the CSV clock origin;
+    all events and their state indices remain recorded in the report. This
+    validates sequence timing, without assuming how a controller handles the
+    subsequent triggers.
     """
     import pypulseq as pp
 
@@ -37,9 +42,12 @@ def sequence_trigger_timing(sequence_path, timing, channel='ext1'):
     if not isinstance(channel, str) or not channel:
         raise ValueError("channel must name an output-trigger channel.")
     rf_center = _finite_scalar(timing['rf_center_s'], 'rf_center_s')
+    if np.iscomplexobj(timing['state_start_s']):
+        raise ValueError("timing must include finite, strictly increasing real imaging command starts.")
     starts = np.asarray(timing['state_start_s'], dtype=float).reshape(-1)
-    if not starts.size or not np.isfinite(starts).all():
-        raise ValueError("timing must include finite imaging command starts.")
+    if (not starts.size or not np.isfinite(starts).all()
+            or np.any(np.diff(starts) <= 0)):
+        raise ValueError("timing must include finite, strictly increasing real imaging command starts.")
     path = Path(sequence_path)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if timing.get('sequence_sha256') not in (None, digest):
@@ -56,17 +64,41 @@ def sequence_trigger_timing(sequence_path, timing, channel='ext1'):
                                    time_sequence_s=absolute, time_rf_s=absolute - rf_center,
                                    duration_s=float(event.duration)))
         elapsed += float(duration)
-    selected = [event for event in events if event['channel'] == channel]
-    if len(selected) != 1:
-        raise ValueError(f"Need exactly one {channel} output trigger, found {len(selected)}.")
+    selected = sorted((event for event in events if event['channel'] == channel),
+                      key=lambda event: event['time_sequence_s'])
+    if not selected:
+        raise ValueError(f"No {channel} output trigger found; require a first-imaging trigger or one per imaging command.")
     event = selected[0]
-    if abs(event['time_rf_s'] - starts[0]) > 1e-9:
+    tolerance = 1e-9
+    if abs(event['time_rf_s'] - starts[0]) > tolerance:
         raise ValueError("The selected trigger is not at the first imaging-command start.")
+    trigger_times = np.asarray([item['time_rf_s'] for item in selected])
+    if len(selected) == 1:
+        mode, indices = 'single_trigger', [0]
+        alignment_error = abs(float(trigger_times[0] - starts[0]))
+    else:
+        if len(selected) != starts.size:
+            raise ValueError(f"Need one first-imaging {channel} trigger or exactly one per imaging command "
+                             f"({starts.size}), found {len(selected)}.")
+        if (np.any(np.diff(trigger_times) <= 0)
+                or not np.allclose(trigger_times, starts, rtol=0, atol=tolerance)):
+            raise ValueError(f"The {channel} trigger train must match every imaging-command start "
+                             "in order, without duplicates or additional navigator triggers.")
+        mode, indices = 'per_line', list(range(int(starts.size)))
+        alignment_error = float(np.max(np.abs(trigger_times - starts)))
     return dict(trigger_rf_s=event['time_rf_s'], trigger_sequence_s=event['time_sequence_s'],
                 channel=channel, verified_first_imaging_trigger=True,
+                mode=mode, trigger_count=len(selected),
+                verified_per_line_triggers=mode == 'per_line',
+                trigger_times_rf_s=trigger_times.tolist(),
+                trigger_times_sequence_s=[item['time_sequence_s'] for item in selected],
+                trigger_state_indices=indices,
+                maximum_trigger_alignment_error_s=alignment_error,
+                trigger_alignment_tolerance_s=tolerance,
                 first_imaging_start_rf_s=float(starts[0]), output_events=events,
+                sequence_duration_s=float(elapsed),
                 sequence_file=str(path.resolve()), sequence_sha256=digest,
-                method='Actual Pulseq block clock plus output-event delay; first imaging start verified',
+                method='Actual Pulseq block clock plus output-event delay; first imaging start and optional per-line train verified',
                 hardware_latency_measured=False, no_hardware_action_performed=True)
 
 

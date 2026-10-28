@@ -58,7 +58,8 @@ def _map_outputs(values, mapping, polarity):
 
 def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
                        channel_map=None, channel_polarity=None, channel=None,
-                       csv_file=None, csv_origin_rf_s=None):
+                       csv_file=None, csv_origin_rf_s=None,
+                       csv_leading_zero_states=0):
     """Prepare full traces and an exact-response transition zoom for plotting.
 
     ``channel`` is a 1-based physical output number; None selects the largest
@@ -69,6 +70,9 @@ def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
     Its actual commands can be overlaid, while the physical prediction remains
     based on currents_A and the model's command windows, not on measured current
     telemetry. The report checks CSV/model values and transition timestamps.
+    For an export starting at its first nonzero command, include the recorded
+    clock shift in csv_origin_rf_s and pass csv_leading_zero_states so omitted
+    initial zero states are checked rather than reported as missing events.
     """
     if origin == 'rf':
         origin_rf_s, origin_label = 0., 'centre RF'
@@ -124,6 +128,12 @@ def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
         if csv_origin_rf_s is None:
             raise ValueError("csv_origin_rf_s must state the actual CSV time origin relative to RF.")
         csv_origin = _finite_scalar(csv_origin_rf_s, 'csv_origin_rf_s')
+        skipped = _finite_scalar(csv_leading_zero_states, 'csv_leading_zero_states')
+        commands = np.asarray(currents_A)
+        if (skipped != int(skipped) or skipped < 0 or skipped >= commands.shape[1]
+                or np.any(commands[:, :int(skipped)] != 0)):
+            raise ValueError("csv_leading_zero_states must count only omitted initial all-zero command states.")
+        skipped = int(skipped)
         csv = read_waveform_csv(csv_file)
         csv_rf_s = csv['time_s'] + csv_origin
         if int(mapping[selected]) > csv['commanded_A'].shape[0]:
@@ -144,9 +154,11 @@ def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
             stored = np.pad(csv['commanded_A'][:, keep],
                             ((0, output_count - csv['commanded_A'].shape[0]), (0, 0)))
             difference = float(np.max(np.abs(predicted - stored)))
-        expected_events = np.unique(np.r_[model.line_start_s, model.line_end_s])
+        expected_events = np.unique(np.r_[np.asarray(model.line_start_s)[skipped:],
+                                         np.asarray(model.line_end_s)[skipped:]])
         distance = float(np.min(np.abs(expected_events[:, None] - csv_rf_s[None, :]), axis=1).max())
         report.update(csv_file=csv['file'], csv_origin_rf_s=csv_origin,
+            csv_leading_zero_states=skipped,
             csv_max_command_difference_A=difference,
             csv_commands_match_within_0p6mA=difference is not None and difference <= .0006,
             csv_max_model_event_distance_s=distance,

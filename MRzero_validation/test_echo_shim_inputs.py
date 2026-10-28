@@ -163,6 +163,207 @@ class EchoShimInputTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "origin-centered"):
             self.prepare(alignment_center_m=(.001, 0.))
 
+    def test_finite_voxel_affine_gradients_follow_native_axes_and_physical_alignment(self):
+        result = self.prepare(inplane_voxel=True, alignment_angle_deg=31.,
+                              alignment_mirror_x=True, frame_angle_deg=47., subspins_z=3)
+        voxel = result["expanded_experiment"]["inplane_voxel"]
+        native_edges = np.array([[0., .001], [.001, 0.]])
+        np.testing.assert_allclose(voxel["edge_vectors_m"],
+            native_edges @ result["combined_frame_matrix"].T, atol=1e-18)
+        expected_b0 = np.broadcast_to([-.7, 1.], voxel["b0_gradient_Hz_per_pixel"].shape)
+        np.testing.assert_allclose(voxel["b0_gradient_Hz_per_pixel"], expected_b0, atol=1e-12)
+        alignment = np.asarray(result["report"]["alignment_matrix"])
+        aligned_edges = native_edges @ alignment.T
+        patient_edges = np.column_stack((-aligned_edges[:, 1], aligned_edges[:, 0], np.zeros(2)))
+        expected_coil = ((patient_edges @ [100., 170., 200.])[:, None] * np.arange(1, 33))
+        np.testing.assert_allclose(voxel["field_gradient_Hz_per_A_per_pixel"],
+            np.broadcast_to(expected_coil, voxel["field_gradient_Hz_per_A_per_pixel"].shape), atol=2e-12)
+        corners = np.asarray([[-.5, -.5], [-.5, .5], [.5, -.5], [.5, .5]])
+        corner_xyz = result["xyz_m"][..., None, :] + corners @ patient_edges
+        expected_corners = (3 + 100 * corner_xyz[..., 0] + 170 * corner_xyz[..., 1]
+                            + 200 * corner_xyz[..., 2])[..., None] * np.arange(1, 33)
+        np.testing.assert_allclose(voxel["field_at_corners_Hz_per_A"], expected_corners, atol=2e-12)
+        self.assertTrue(voxel["ACDC_corner_coverage_verified"])
+        self.assertLess(result["report"]["ACDC_corner_linearization_max_abs_error_Hz_per_A"], 1e-12)
+
+    def test_finite_voxel_passive_frame_preserves_patient_fields_and_native_slopes(self):
+        original = self.prepare(inplane_voxel=True, frame_angle_deg=0.)
+        changed = self.prepare(inplane_voxel=True, frame_angle_deg=71., frame_mirror_y=True)
+        for key in ("xyz_m", "fieldbasis", "parent_valid_mask"):
+            np.testing.assert_array_equal(original[key], changed[key])
+        for key in ("b0_gradient_Hz_per_pixel", "field_gradient_Hz_per_A_per_pixel"):
+            np.testing.assert_array_equal(original["expanded_experiment"]["inplane_voxel"][key],
+                                          changed["expanded_experiment"]["inplane_voxel"][key])
+
+    def test_unknown_diagonal_calibration_corner_excludes_complete_voxel(self):
+        # This source node is in the diagonal corner stencil of patient (0,0),
+        # but not its centre or any of its four axial endpoint stencils.
+        self.source["mask"][3, 3, :] = False
+        np.savez(self.path, **self.source)
+        point = self.prepare(alignment_angle_deg=0., subspins_z=3)
+        voxel = self.prepare(alignment_angle_deg=0., subspins_z=3, inplane_voxel=True)
+        self.assertTrue(point["parent_valid_mask"][4, 4])
+        self.assertFalse(voxel["parent_valid_mask"][4, 4])
+        self.assertGreater(voxel["report"]["excluded_missing_ACDC_gradient_or_corner_parent_count"], 0)
+        indices = voxel["parent_flat_index"]
+        np.testing.assert_allclose(voxel["expanded_experiment"]["m0_proxy"].sum(axis=1),
+                                   self.fit["first_echo_amplitude"].ravel()[indices] / 4)
+
+    def test_singular_native_B0_gradient_excludes_parent_instead_of_assuming_zero(self):
+        valid = np.zeros((8, 8), bool)
+        valid[1:4, 1:4] = True
+        valid[7, 7] = True
+        self.inputs["field"]["mask"] = valid
+        result = self.prepare(inplane_voxel=True)
+        self.assertFalse(result["parent_valid_mask"][7, 7])
+        self.assertEqual(result["report"]["excluded_missing_B0_gradient_parent_count"], 1)
+        self.assertTrue(np.isnan(result["native_B0_gradient_Hz_per_pixel"][7, 7]).all())
+
+    def test_echo_power_uses_only_declared_B0_echoes_and_no_EPI_image(self):
+        b0 = self.inputs["field"]["b0Hz"]
+        first = self.fit["first_echo_amplitude"]
+        te = .002 + np.arange(5) * .002
+        coils = first[None, None] * np.exp(-2j * np.pi * te[:, None, None, None] * b0[None, None])
+        coils[3:] *= 100  # Later relaxation echoes must not change B0 weights.
+        self.inputs["b0_raw"]["coil_images"] = coils
+        self.inputs["field_echo_count"] = 3
+        self.inputs["scan"] = np.full((4, 4), np.nan)
+        result = self.prepare(inplane_voxel=True, b0_weighting="echo_power")
+        np.testing.assert_allclose(result["native_B0_weights"], first**2, atol=1e-14)
+        report = result["report"]["B0_regularization"]
+        self.assertEqual(report["weighting_echo_count"], 3)
+        self.assertFalse(report["weighting_uses_EPI"])
+        self.assertEqual(result["report"]["retained_parent_count"], 63)
+
+    def test_legacy_defaults_remain_point_model_and_new_options_are_explicit(self):
+        point = self.prepare()
+        self.assertNotIn("inplane_voxel", point["expanded_experiment"])
+        self.assertEqual(point["report"]["B0_weighting"], "uniform")
+        with self.assertRaisesRegex(ValueError, "b0_weighting"):
+            self.prepare(b0_weighting="fit_to_EPI")
+        with self.assertRaisesRegex(ValueError, "inplane_voxel"):
+            self.prepare(inplane_voxel=4)
+        with self.assertRaisesRegex(ValueError, "coil_images"):
+            self.prepare(b0_weighting="echo_power")
+
+    def test_zero_baseline_calibration_preserves_model_arrays_and_inputs(self):
+        before=deepcopy(self.inputs)
+        old=self.prepare(inplane_voxel=True,subspins_z=3)
+        new=self.prepare(inplane_voxel=True,subspins_z=3,baseline_calibration={})
+        for key in ('native_X_m','native_Y_m','native_B0_Hz','parent_valid_mask',
+                    'fieldbasis','xyz_m','native_amplitude','native_rate_sInv'):
+            np.testing.assert_array_equal(old[key],new[key])
+        for key in old['expanded_experiment']['inplane_voxel']:
+            np.testing.assert_array_equal(old['expanded_experiment']['inplane_voxel'][key],
+                                           new['expanded_experiment']['inplane_voxel'][key])
+        for key,value in old['expanded_experiment']['acquisition'].items():
+            np.testing.assert_array_equal(value,new['expanded_experiment']['acquisition'][key])
+        self.prepare(inplane_voxel=True,baseline_calibration=dict(
+            frequency_offset_Hz=8.,readout_shift_mm=.7,odd_even_phase_rad=.2))
+        for section in ('b0_raw','field','acquisition'):
+            for key,value in before[section].items():
+                if isinstance(value,np.ndarray):
+                    np.testing.assert_array_equal(value,self.inputs[section][key])
+
+    def test_baseline_frequency_offset_preserves_raw_B0_and_gradient_fit(self):
+        original=self.prepare(inplane_voxel=True,subspins_z=2)
+        changed=self.prepare(inplane_voxel=True,subspins_z=2,
+            baseline_calibration={'frequency_offset_Hz':9.5})
+        np.testing.assert_allclose(changed['native_B0_Hz'],original['native_B0_Hz']+9.5,atol=1e-14)
+        np.testing.assert_array_equal(changed['native_B0_gradient_Hz_per_pixel'],
+                                      original['native_B0_gradient_Hz_per_pixel'])
+        np.testing.assert_array_equal(changed['native_measured_B0_Hz'],self.inputs['field']['b0Hz'])
+        idx=changed['parent_flat_index']
+        raw_children=np.repeat(self.inputs['field']['b0Hz'].ravel()[idx,None],2,axis=1)
+        np.testing.assert_array_equal(changed['expanded_experiment']['field']['measured_b0Hz'],raw_children)
+        self.assertEqual(changed['report']['baseline_calibration']['frequency_offset_Hz'],9.5)
+        self.assertEqual(changed['expanded_experiment']['provenance']['baseline_calibration'],
+                         changed['report']['baseline_calibration'])
+
+    def test_baseline_readout_shift_moves_patient_coil_centers_endpoints_and_corners(self):
+        options=dict(inplane_voxel=True,subspins_z=3,alignment_angle_deg=31.,
+                     alignment_mirror_x=True,frame_angle_deg=47.)
+        original=self.prepare(**options)
+        shifted=self.prepare(**options,baseline_calibration={'readout_shift_mm':.7})
+        np.testing.assert_allclose(shifted['native_X_m'],self.inputs['b0_raw']['X_m']+.0007,atol=1e-18)
+        np.testing.assert_array_equal(shifted['original_native_X_m'],self.inputs['b0_raw']['X_m'])
+        np.testing.assert_array_equal(shifted['original_native_Y_m'],self.inputs['b0_raw']['Y_m'])
+        np.testing.assert_array_equal(shifted['native_Y_m'],original['native_Y_m'])
+        for key in ('m0_proxy',):
+            np.testing.assert_array_equal(shifted['expanded_experiment'][key],original['expanded_experiment'][key])
+        np.testing.assert_array_equal(shifted['weights'],original['weights'])
+        self.assertEqual(shifted['report']['amplitude_area_ratio'],original['report']['amplitude_area_ratio'])
+        self.assertFalse(np.allclose(shifted['fieldbasis'],original['fieldbasis']))
+        xyz=shifted['xyz_m']
+        expected=(3+100*xyz[...,0]+170*xyz[...,1]+200*xyz[...,2])[...,None]*np.arange(1,33)
+        np.testing.assert_allclose(shifted['fieldbasis'],expected,atol=2e-12)
+        voxel=shifted['expanded_experiment']['inplane_voxel']
+        native_edges=np.array([[0.,.001],[.001,0.]])
+        alignment=np.asarray(shifted['report']['alignment_matrix'])
+        aligned=native_edges@alignment.T
+        patient_edges=np.column_stack((-aligned[:,1],aligned[:,0],np.zeros(2)))
+        expected_slopes=(patient_edges@[100.,170.,200.])[:,None]*np.arange(1,33)
+        np.testing.assert_allclose(voxel['field_gradient_Hz_per_A_per_pixel'],
+            np.broadcast_to(expected_slopes,voxel['field_gradient_Hz_per_A_per_pixel'].shape),atol=2e-12)
+        offsets=np.array([[-.5,-.5],[-.5,.5],[.5,-.5],[.5,.5]])
+        corners=xyz[...,None,:]+offsets@patient_edges
+        expected_corners=(3+100*corners[...,0]+170*corners[...,1]+200*corners[...,2])[...,None]*np.arange(1,33)
+        np.testing.assert_allclose(voxel['field_at_corners_Hz_per_A'],expected_corners,atol=2e-12)
+
+    def test_baseline_odd_even_phase_uses_chronology_and_leaves_nominal_data_untouched(self):
+        times=self.inputs['acquisition']['time_s']
+        times[1::2]=times[1::2,::-1]
+        original_phase=np.linspace(-.2,.2,16).reshape(4,4)
+        self.inputs['acquisition']['phase_offset_rad']=original_phase.copy()
+        result=self.prepare(frame_angle_deg=37.,baseline_calibration={'odd_even_phase_rad':.6})
+        expected=original_phase-.3*np.array([1.,-1.,1.,-1.])[:,None]
+        np.testing.assert_array_equal(result['acquisition_native']['phase_offset_rad'],expected)
+        np.testing.assert_array_equal(result['expanded_experiment']['acquisition']['phase_offset_rad'],expected)
+        np.testing.assert_array_equal(self.inputs['acquisition']['phase_offset_rad'],original_phase)
+        self.inputs['acquisition']['time_s'][0,1]=self.inputs['acquisition']['time_s'][0,0]
+        with self.assertRaisesRegex(ValueError,'polarity'):
+            self.prepare(baseline_calibration={'odd_even_phase_rad':.6})
+
+    def test_invalid_baseline_calibration_is_rejected(self):
+        for invalid in ([],{'unknown':1.},{'frequency_offset_Hz':np.nan},
+                        {'readout_shift_mm':True},{'odd_even_phase_rad':1j},
+                        {'frequency_offset_Hz':[1.]}):
+            with self.subTest(invalid=invalid),self.assertRaisesRegex(ValueError,'baseline_calibration'):
+                self.prepare(baseline_calibration=invalid)
+
+    def test_native_zero_B0_target_and_current_gradient_include_calibrated_phases(self):
+        from experiment_voxel import FiniteVoxelEchoACDCModel
+        times=self.inputs['acquisition']['time_s']
+        times[1::2]=times[1::2,::-1]
+        starts=times.min(axis=1)-.00005
+        self.inputs['acquisition'].update(line_start_s=starts,
+            line_end_s=np.r_[starts[1:],times[-1].max()+.00005],
+            line_index=np.repeat(np.arange(1,5)[:,None],4,axis=1),
+            rf_time_s=np.zeros((4,4)),phase_offset_rad=np.zeros((4,4)),sequence_kind='epi')
+        params=dict(frequency_offset_Hz=8.,readout_shift_mm=.4,odd_even_phase_rad=.3)
+        options=dict(inplane_voxel=True,subspins_z=2,rate_mode='none')
+        def make(parameters):
+            result=self.prepare(**options,baseline_calibration=parameters)
+            return FiniteVoxelEchoACDCModel(result['expanded_experiment'],result['expanded_calibration'],
+                profile='cpu',precision='float64',sample_chunk=7)
+        nominal=make({})
+        frequency=make({'frequency_offset_Hz':8.})
+        np.testing.assert_allclose(frequency.ideal_kdata,nominal.ideal_kdata,rtol=1e-12,atol=1e-12)
+        self.assertGreater(np.linalg.norm(frequency.forward(np.zeros((32,4)))[1]
+                                         -nominal.forward(np.zeros((32,4)))[1]),1e-3)
+        phase=make({'odd_even_phase_rad':.3})
+        multiplier=np.exp(-.15j*np.array([1.,-1.,1.,-1.]))[:,None]
+        np.testing.assert_allclose(phase.ideal_kdata,nominal.ideal_kdata*multiplier,rtol=5e-6,atol=3e-6)
+        calibrated=make(params)
+        rng=np.random.default_rng(901)
+        currents=rng.normal(size=(32,4))*.015
+        direction=rng.normal(size=currents.shape);direction/=np.linalg.norm(direction)
+        _,gradient=calibrated.objective_and_grad(currents)
+        epsilon=1e-5
+        difference=(calibrated.objective_and_grad(currents+epsilon*direction)[0]
+                    -calibrated.objective_and_grad(currents-epsilon*direction)[0])/(2*epsilon)
+        np.testing.assert_allclose(np.sum(gradient*direction),difference,rtol=4e-6,atol=3e-9)
+
 
 if __name__ == "__main__":
     unittest.main()

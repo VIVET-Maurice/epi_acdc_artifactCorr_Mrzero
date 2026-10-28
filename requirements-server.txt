@@ -3,6 +3,7 @@
 # Cette borne conserve une installation CUDA existante compatible.
 torch>=2.6,<3
 MRzeroCore==1.1.1
+quadprog>=0.1.8,<0.2
 numpy==2.4.6
 scipy==1.17.1
 matplotlib==3.11.2

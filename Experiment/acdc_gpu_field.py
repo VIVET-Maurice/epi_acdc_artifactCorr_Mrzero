@@ -48,6 +48,8 @@ def solve_field_gpu(
     those choices, which also permits small CPU checks.
 
     Channel and total-current constraints use the shared box/L1 projection.
+    A zero per-channel maximum disables its commands without changing the
+    measured field basis; an all-zero maximum returns zero commands.
     If a nominal field limit is active, the shared helper additionally scales
     each command toward zero. This keeps commands feasible but is not the
     Euclidean projection onto all field constraints. Therefore an active
@@ -109,8 +111,8 @@ def solve_field_gpu(
         if limits.ndim > 1 or limits.numel() not in (1, n_channels):
             raise ValueError("max_current_A must be a scalar or one limit per channel.")
         limits = limits.reshape(-1).expand(n_channels)
-        if not bool(torch.isfinite(limits).all()) or not bool((limits > 0).all()):
-            raise ValueError("Per-channel limits must be positive and finite.")
+        if not bool(torch.isfinite(limits).all()) or not bool((limits >= 0).all()):
+            raise ValueError("Per-channel limits must be nonnegative and finite; zero disables a channel.")
 
         R = None if response is None else tensor(response)
         if R is not None:
