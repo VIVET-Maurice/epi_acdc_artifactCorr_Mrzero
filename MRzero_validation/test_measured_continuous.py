@@ -91,6 +91,19 @@ class MeasuredContinuousTests(unittest.TestCase):
                 self.assertEqual(report["dtype"], str(dtype))
                 self.assertEqual(report["rounded_or_discarded_samples"], 0)
 
+    def test_offset_receiver_origin_does_not_shift_or_rephase_measured_data(self):
+        acq = acquisition()
+        acq["kx_mInv"] += np.arange(4)[:, None] * .03
+        samples = self.complex_values((2, 4, 6))
+        expected = direct_reconstruction(samples, acq)
+        acq["encoding_origin_m"] = [.017, -.031]
+        diagnostics = {"kspace": np.moveaxis(samples.copy(), 0, 1)}
+        _, report = reconstruct_receivers(diagnostics, acq)
+        np.testing.assert_allclose(diagnostics["coil_images"],
+            np.moveaxis(expected, 0, 1), atol=2e-14)
+        np.testing.assert_array_equal(diagnostics["kspace"], np.moveaxis(samples, 0, 1))
+        self.assertEqual(report["encoding_origin_m"], [.017, -.031])
+
     def b0_fixture(self, path, polarity=-1, echo_count=3):
         ny, nx, ne, receivers = 4, 6, echo_count, 2
         acq = acquisition((ny, nx))
@@ -144,6 +157,74 @@ class MeasuredContinuousTests(unittest.TestCase):
             products = np.sum(raw["coil_images"][1:] * raw["coil_images"][:-1].conj(), axis=1)
             estimated = -np.angle(products) / (2 * np.pi * np.diff(te)[:, None, None])
             np.testing.assert_allclose(estimated, field_hz, atol=2e-12)
+
+    def test_offset_b0_retains_echo_phases_and_absolute_origin_in_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "b0.seq"
+            path.write_text("validated synthetic sequence", encoding="utf-8")
+            raw, acq, _, sequence = self.b0_fixture(path)
+            expected = direct_reconstruction(raw["kspace"], acq)
+            raw["metadata"]["slice_position_mm"] = [31., 17., -22.]
+            with patch.dict("sys.modules", {"pypulseq": SimpleNamespace(Sequence=lambda: sequence)}):
+                reports = reconstruct_b0_echoes(raw, path)
+            np.testing.assert_allclose(raw["coil_images"], expected, atol=3e-14)
+            for report in reports:
+                np.testing.assert_allclose(report["encoding_origin_m"], [.017, -.031], atol=1e-15)
+
+    def test_oblique_b0_preserves_complex_echo_data_and_uses_projected_origin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oblique.seq"
+            path.write_text("validated oblique sequence", encoding="utf-8")
+            raw, acq, _, sequence = self.b0_fixture(path)
+            # R_x(theta) @ R_z(pi/2): readout lies in patient y/z, phase in -x.
+            theta = np.deg2rad(23.)
+            q = np.asarray([np.cos(theta / 2), np.sin(theta / 2),
+                            -np.sin(theta / 2), np.cos(theta / 2)]) / np.sqrt(2)
+            center = np.asarray([31., 17., -22.])
+            expected_origin = [1e-3 * (center[1] * np.cos(theta) + center[2] * np.sin(theta)),
+                               -1e-3 * center[0]]
+            raw["metadata"].update(slice_position_mm=center.tolist(),
+                                   slice_quaternion_wxyz=(-(1. + 3e-8) * q).tolist())
+            te = np.asarray([.002, .004, .006])
+            field_hz = 73.
+            raw["kspace"] = self.complex_values((2, 4, 6))[None] * np.exp(
+                -(12. + 2j * np.pi * field_hz) * te[:, None, None, None])
+            original_kspace = raw["kspace"].copy()
+            expected_images = direct_reconstruction(original_kspace, acq)
+            with patch.dict("sys.modules", {"pypulseq": SimpleNamespace(Sequence=lambda: sequence)}):
+                reports = reconstruct_b0_echoes(raw, path)
+            np.testing.assert_array_equal(raw["kspace"], original_kspace)
+            np.testing.assert_allclose(raw["coil_images"], expected_images, atol=3e-14)
+            for report in reports:
+                np.testing.assert_allclose(report["encoding_origin_m"], expected_origin, atol=1e-15)
+                self.assertFalse(report["receiver_phase_reapplied"])
+            products = np.sum(raw["coil_images"][1:] * raw["coil_images"][:-1].conj(), axis=1)
+            estimated = -np.angle(products) / (2 * np.pi * np.diff(te)[:, None, None])
+            np.testing.assert_allclose(estimated, field_hz, atol=2e-12)
+
+    def test_b0_rejects_explicit_origin_inconsistent_with_oblique_pose(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oblique.seq"
+            path.write_text("validated oblique sequence", encoding="utf-8")
+            raw, _, _, sequence = self.b0_fixture(path)
+            raw["metadata"].update(slice_position_mm=[31., 17., -22.],
+                                   slice_quaternion_wxyz=[1., 0., 0., 0.],
+                                   encoding_origin_m=[.017, -.031])
+            with patch.dict("sys.modules", {"pypulseq": SimpleNamespace(Sequence=lambda: sequence)}):
+                with self.assertRaisesRegex(ValueError, "origin disagrees"):
+                    reconstruct_b0_echoes(raw, path)
+
+    def test_b0_explicit_origin_without_pose_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "b0.seq"
+            path.write_text("validated sequence", encoding="utf-8")
+            raw, acq, _, sequence = self.b0_fixture(path)
+            raw["metadata"]["encoding_origin_m"] = [.017, -.031]
+            expected = direct_reconstruction(raw["kspace"], acq)
+            with patch.dict("sys.modules", {"pypulseq": SimpleNamespace(Sequence=lambda: sequence)}):
+                reports = reconstruct_b0_echoes(raw, path)
+            np.testing.assert_allclose(raw["coil_images"], expected, atol=3e-14)
+            self.assertTrue(all(report["encoding_origin_m"] == [.017, -.031] for report in reports))
 
     def test_thirty_two_echoes_preserve_phase_and_decay_with_echo_dependent_k_offsets(self):
         with tempfile.TemporaryDirectory() as directory:

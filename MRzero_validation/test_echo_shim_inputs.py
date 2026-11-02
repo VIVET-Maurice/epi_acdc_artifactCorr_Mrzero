@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from echo_shim_inputs import prepare_echo_shim_inputs
 from subspin_sampling import _load_source
@@ -79,6 +80,205 @@ class EchoShimInputTests(unittest.TestCase):
         np.testing.assert_allclose(xyz[..., 2].mean(axis=1), .01)
         np.testing.assert_allclose(np.ptp(xyz[..., 2], axis=1), .002 * 7 / 8)
         self.assertGreater(np.ptp(result["fieldbasis"][0, :, 0]), 0.)
+
+    def translate_slice(self, displacement_mm):
+        """Translate the observed slice while retaining its local image data."""
+        displacement_mm = np.asarray(displacement_mm, dtype=float)
+        for metadata in (self.inputs["scan_metadata"], self.inputs["b0_raw"]["metadata"]):
+            metadata["slice_position_mm"] = (
+                np.asarray(metadata["slice_position_mm"]) + displacement_mm).tolist()
+        self.inputs["b0_raw"]["X_m"] = self.inputs["b0_raw"]["X_m"] + displacement_mm[1] * 1e-3
+        self.inputs["b0_raw"]["Y_m"] = self.inputs["b0_raw"]["Y_m"] - displacement_mm[0] * 1e-3
+
+    def set_slice_quaternion(self, quaternion):
+        """Change the measured basis while preserving the local image grid."""
+        old_quaternion = np.asarray(self.inputs["scan_metadata"]["slice_quaternion_wxyz"])
+        old_basis = Rotation.from_quat(old_quaternion[[1, 2, 3, 0]]).as_matrix()
+        basis = Rotation.from_quat(np.asarray(quaternion)[[1, 2, 3, 0]]).as_matrix()
+        position = np.asarray(self.inputs["scan_metadata"]["slice_position_mm"]) * 1e-3
+        delta = position @ (basis[:, :2] - old_basis[:, :2])
+        for metadata in (self.inputs["scan_metadata"], self.inputs["b0_raw"]["metadata"]):
+            metadata["slice_quaternion_wxyz"] = np.asarray(quaternion).tolist()
+        self.inputs["b0_raw"]["X_m"] = self.inputs["b0_raw"]["X_m"] + delta[0]
+        self.inputs["b0_raw"]["Y_m"] = self.inputs["b0_raw"]["Y_m"] + delta[1]
+        return basis
+
+    def test_float32_axial_quaternion_is_normalized_without_changing_physical_queries(self):
+        baseline = self.prepare(subspins_z=3, inplane_voxel=True)
+        quaternion = np.asarray([1., 0., 0., 1.], dtype=np.float32) / np.sqrt(np.float32(2.))
+        self.assertGreater(abs(np.linalg.norm(quaternion.astype(float)) - 1), 1e-8)
+        self.set_slice_quaternion(quaternion)
+        result = self.prepare(subspins_z=3, inplane_voxel=True)
+        np.testing.assert_allclose(result["xyz_m"], baseline["xyz_m"], rtol=0, atol=1e-17)
+        np.testing.assert_allclose(result["fieldbasis"], baseline["fieldbasis"], rtol=0, atol=2e-12)
+
+    def test_measured_oblique_float32_quaternion_rotates_centers_and_thickness_normal(self):
+        # Real acquisition 031: Phoenix normal [-.004765, .005912, .999971].
+        options = dict(subspins_z=8, alignment_angle_deg=37.,
+                       alignment_mirror_y=True, frame_angle_deg=73.)
+        axial = self.prepare(**options)
+        quaternion = np.array([.7070966958999634, -.0037749139592051506,
+                               .00040555562009103596, .7071066498756409])
+        basis = self.set_slice_quaternion(quaternion)
+        result = self.prepare(**options)
+        for key in ("frame_X_m", "frame_Y_m"):
+            np.testing.assert_allclose(result[key], axial[key], rtol=0, atol=3e-18)
+        for key in ("kx_mInv", "ky_mInv", "time_s"):
+            np.testing.assert_array_equal(result["expanded_experiment"]["acquisition"][key],
+                                          axial["expanded_experiment"]["acquisition"][key])
+        center = np.asarray(self.inputs["scan_metadata"]["slice_position_mm"]) * 1e-3
+        origin = center @ basis[:, :2]
+        native = np.stack((result["native_X_m"], result["native_Y_m"]), axis=-1)
+        aligned = (native - origin) @ np.asarray(result["report"]["alignment_matrix"]).T
+        indices = result["parent_flat_index"]
+        expected = (aligned.reshape(-1, 2)[indices] @ basis[:, :2].T)[:, None, :]
+        dz = ((np.arange(8) + .5) / 8 - .5) * .002
+        expected = center + expected + dz[None, :, None] * basis[:, 2]
+        np.testing.assert_allclose(result["xyz_m"], expected, rtol=0, atol=1e-17)
+        np.testing.assert_allclose(np.diff(result["xyz_m"], axis=1),
+            np.broadcast_to(.002 / 8 * basis[:, 2], (len(indices), 7, 3)), rtol=0, atol=3e-18)
+        np.testing.assert_allclose(result["report"]["slice_normal_patient"],
+                                   [-.004765, .005912, .999971], atol=2e-7, rtol=0)
+        self.assertGreater(np.ptp(result["xyz_m"].mean(axis=1)[:, 2]), 1e-5)
+        expected_fields = (3 + result["xyz_m"] @ [100., 170., 200.])[..., None] * np.arange(1, 33)
+        np.testing.assert_allclose(result["fieldbasis"], expected_fields, rtol=0, atol=2e-12)
+        np.testing.assert_allclose(result["expanded_experiment"]["geometry"]["orientation"],
+                                   basis[:, :2].T.ravel(), rtol=0, atol=1e-15)
+
+    def test_oblique_finite_voxel_affine_queries_include_tilted_edges_and_corners(self):
+        xyzw = Rotation.from_euler("xyz", [14., -8., 90.], degrees=True).as_quat()
+        basis = self.set_slice_quaternion(xyzw[[3, 0, 1, 2]])
+        self.settings["patient_to_source_m"][:3, :3] = np.diag([.95, 1.02, .98])
+        self.settings["patient_to_source_m"][:3, 3] = [-.0002, .0003, .0004]
+        options = dict(inplane_voxel=True, subspins_z=3, alignment_angle_deg=31.,
+                       alignment_mirror_x=True, frame_angle_deg=47.)
+        result = self.prepare(**options)
+        affine = self.settings["patient_to_source_m"]
+        def expected_fields(xyz):
+            query = xyz @ affine[:3, :3].T + affine[:3, 3]
+            return (3 + query @ [100., 170., 200.])[..., None] * np.arange(1, 33)
+        np.testing.assert_allclose(result["fieldbasis"], expected_fields(result["xyz_m"]),
+                                   rtol=0, atol=2e-12)
+        native_edges = np.array([[0., .001], [.001, 0.]])
+        aligned_edges = native_edges @ np.asarray(result["report"]["alignment_matrix"]).T
+        patient_edges = aligned_edges @ basis[:, :2].T
+        self.assertGreater(np.max(abs(patient_edges[:, 2])), 1e-4)
+        endpoint_xyz = result["xyz_m"][..., None, :] + np.stack((
+            -.5 * patient_edges[0], .5 * patient_edges[0],
+            -.5 * patient_edges[1], .5 * patient_edges[1]))
+        endpoint_fields = expected_fields(endpoint_xyz)
+        expected_gradient = np.stack((endpoint_fields[..., 1, :] - endpoint_fields[..., 0, :],
+                                      endpoint_fields[..., 3, :] - endpoint_fields[..., 2, :]), axis=-2)
+        voxel = result["expanded_experiment"]["inplane_voxel"]
+        np.testing.assert_allclose(voxel["field_gradient_Hz_per_A_per_pixel"],
+                                   expected_gradient, rtol=0, atol=2e-12)
+        corners = np.array([[-.5, -.5], [-.5, .5], [.5, -.5], [.5, .5]])
+        corner_xyz = result["xyz_m"][..., None, :] + corners @ patient_edges
+        np.testing.assert_allclose(voxel["field_at_corners_Hz_per_A"],
+                                   expected_fields(corner_xyz), rtol=0, atol=2e-12)
+        changed = self.prepare(**dict(options, frame_angle_deg=121., frame_mirror_y=True))
+        for key in ("xyz_m", "fieldbasis", "parent_flat_index"):
+            np.testing.assert_array_equal(changed[key], result[key])
+
+    def test_opposite_quaternion_sign_preserves_oblique_slice_geometry(self):
+        xyzw = Rotation.from_euler("xyz", [5., -7., 90.], degrees=True).as_quat()
+        self.set_slice_quaternion(xyzw[[3, 0, 1, 2]])
+        original = self.prepare(inplane_voxel=True, subspins_z=3)
+        self.inputs["b0_raw"]["metadata"]["slice_quaternion_wxyz"] = (
+            -np.asarray(self.inputs["b0_raw"]["metadata"]["slice_quaternion_wxyz"])).tolist()
+        changed = self.prepare(inplane_voxel=True, subspins_z=3)
+        for key in ("xyz_m", "fieldbasis", "parent_flat_index"):
+            np.testing.assert_array_equal(changed[key], original[key])
+
+    def test_different_B0_slice_orientation_and_invalid_quaternions_are_rejected(self):
+        xyzw = Rotation.from_euler("xyz", [.2, 0., 90.], degrees=True).as_quat()
+        self.inputs["b0_raw"]["metadata"]["slice_quaternion_wxyz"] = xyzw[[3, 0, 1, 2]].tolist()
+        with self.assertRaisesRegex(ValueError, "different slice orientations"):
+            self.prepare()
+        for quaternion in ([0., 0., 0., 0.], [.7, 0., 0., .7],
+                           [np.nan, 0., 0., 1.], [1., 0., 0.], [1j, 0., 0., 1.]):
+            with self.subTest(quaternion=quaternion):
+                self.inputs["b0_raw"]["metadata"]["slice_quaternion_wxyz"] = quaternion
+                with self.assertRaises(ValueError):
+                    self.prepare()
+
+    def test_slice_header_translation_moves_patient_queries_without_rotating_its_origin(self):
+        options = dict(alignment_angle_deg=31., alignment_mirror_x=True,
+                       frame_angle_deg=73., frame_mirror_y=True, subspins_z=3)
+        centered = self.prepare(**options)
+        displacement_mm = np.array([1.1, -.8, .5])
+        self.translate_slice(displacement_mm)
+        translated = self.prepare(**options)
+        np.testing.assert_array_equal(translated["parent_flat_index"], centered["parent_flat_index"])
+        expected_xyz = centered["xyz_m"] + displacement_mm * 1e-3
+        np.testing.assert_allclose(translated["xyz_m"], expected_xyz, atol=4e-18, rtol=0)
+        for axis in ("X_m", "Y_m"):
+            np.testing.assert_allclose(translated["expanded_experiment"]["geometry"][axis],
+                                       centered["expanded_experiment"]["geometry"][axis], atol=3e-18)
+        native_origin = np.array([-.0008, -.0011])
+        np.testing.assert_array_equal(translated["acquisition_native"]["encoding_origin_m"], native_origin)
+        framed = translated["expanded_experiment"]["acquisition"]
+        np.testing.assert_array_equal(framed["encoding_origin_m"], np.zeros(2))
+        np.testing.assert_array_equal(framed["native_frame_origin_m"], native_origin)
+        np.testing.assert_allclose(translated["physical_X_m"], centered["physical_X_m"] + native_origin[0], atol=3e-18)
+        np.testing.assert_allclose(translated["physical_Y_m"], centered["physical_Y_m"] + native_origin[1], atol=3e-18)
+        expected_fields = (3 + 100 * expected_xyz[..., 0] + 170 * expected_xyz[..., 1]
+                           + 200 * expected_xyz[..., 2])[..., None] * np.arange(1, 33)
+        np.testing.assert_allclose(translated["fieldbasis"], expected_fields, atol=2e-12)
+        self.assertFalse(np.allclose(translated["fieldbasis"], centered["fieldbasis"]))
+
+    def test_offset_finite_voxel_centers_endpoints_and_corners_use_actual_patient_location(self):
+        options = dict(inplane_voxel=True, alignment_angle_deg=31.,
+                       alignment_mirror_x=True, frame_angle_deg=47., subspins_z=3)
+        centered = self.prepare(**options)
+        self.translate_slice([1.1, -.8, .5])
+        translated = self.prepare(**options)
+        np.testing.assert_array_equal(translated["parent_flat_index"], centered["parent_flat_index"])
+        voxel = translated["expanded_experiment"]["inplane_voxel"]
+        aligned_edges = np.array([[0., .001], [.001, 0.]]) @ np.asarray(
+            translated["report"]["alignment_matrix"]).T
+        patient_edges = np.column_stack((-aligned_edges[:, 1], aligned_edges[:, 0], np.zeros(2)))
+        corners = np.asarray([[-.5, -.5], [-.5, .5], [.5, -.5], [.5, .5]])
+        xyz = translated["xyz_m"][..., None, :] + corners @ patient_edges
+        expected = (3 + 100 * xyz[..., 0] + 170 * xyz[..., 1]
+                     + 200 * xyz[..., 2])[..., None] * np.arange(1, 33)
+        np.testing.assert_allclose(voxel["field_at_corners_Hz_per_A"], expected, atol=2e-12)
+        for key in ("b0_gradient_Hz_per_pixel", "field_gradient_Hz_per_A_per_pixel", "edge_vectors_m"):
+            np.testing.assert_allclose(voxel[key], centered["expanded_experiment"]["inplane_voxel"][key], atol=2e-12)
+
+    def test_offset_does_not_add_a_fourier_phase_but_changes_current_response(self):
+        from experiment_voxel import FiniteVoxelEchoACDCModel
+        times = self.inputs["acquisition"]["time_s"]
+        times[1::2] = times[1::2, ::-1]
+        starts = times.min(axis=1) - .00005
+        self.inputs["acquisition"].update(line_start_s=starts,
+            line_end_s=np.r_[starts[1:], times[-1].max() + .00005],
+            line_index=np.repeat(np.arange(1, 5)[:, None], 4, axis=1),
+            rf_time_s=np.zeros((4, 4)), phase_offset_rad=np.zeros((4, 4)), sequence_kind="epi")
+        options = dict(inplane_voxel=True, alignment_angle_deg=31.,
+                       alignment_mirror_x=True, frame_angle_deg=47., subspins_z=2, rate_mode="none")
+        centered = self.prepare(**options)
+        self.translate_slice([1.1, -.8, .5])
+        translated = self.prepare(**options)
+        models = [FiniteVoxelEchoACDCModel(item["expanded_experiment"], item["expanded_calibration"],
+                    profile="cpu", precision="float64", sample_chunk=7)
+                  for item in (centered, translated)]
+        np.testing.assert_allclose(models[1].ideal_kdata, models[0].ideal_kdata, rtol=1e-12, atol=1e-12)
+        zero = np.zeros((32, 4))
+        np.testing.assert_allclose(models[1].forward(zero)[1], models[0].forward(zero)[1], rtol=1e-12, atol=1e-12)
+        current = zero.copy()
+        current[0] = .3
+        self.assertGreater(np.linalg.norm(models[1].forward(current)[1] - models[0].forward(current)[1]), 1e-5)
+
+    def test_different_B0_inplane_origin_is_rejected(self):
+        self.inputs["b0_raw"]["metadata"]["slice_position_mm"][0] = 1.
+        with self.assertRaisesRegex(ValueError, "different slice planes/origins"):
+            self.prepare()
+
+    def test_translated_slice_outside_3d_calibration_is_never_extrapolated(self):
+        self.translate_slice([30., 20., .5])
+        with self.assertRaisesRegex(ValueError, "No complete ACDC-covered"):
+            self.prepare(inplane_voxel=True)
 
     def test_arbitrary_joint_frame_and_mirrors_preserve_encoding_dot_products(self):
         for angle, mx, my in ((37., False, False), (291., True, False), (21., True, True)):

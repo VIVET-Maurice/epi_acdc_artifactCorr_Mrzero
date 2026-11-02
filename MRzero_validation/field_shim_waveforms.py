@@ -1,6 +1,6 @@
 """Conventional B0 shims using the pinned, unmodified ACDC_Optim solvers.
 
-The measured B0 is constant during the EPI readout. The dynamic shim therefore
+The measured B0 is constant during the EPI or spiral readout. The dynamic shim therefore
 pre-emphasises the configured amplifier response to produce its cancellation
 field over that window; it does not infer a time-varying B0 from the echoes.
 Scanner export and continuous-time hardware checks are performed separately.
@@ -84,7 +84,10 @@ def solve_field_shim_waveforms(model, *, total_current_limit_A=30.,
     Returns independent ``static`` and ``dynamic`` entries containing commands
     ``currents_A[channel, state]`` and RF-relative ``state_edges_rf_s``. The
     one-state static command and uniformly sampled dynamic command cover the
-    same window as the EPI model. The input model is never modified.
+    same readout window as the model. The conventional dynamic comparison has
+    its own uniform command raster; it is not constrained to the imaging
+    optimizer's line or spiral-turn command boundaries. The input model is
+    never modified.
 
     A zero channel bound disables that channel before fitting; the returned
     arrays retain every model channel with exact zeros in disabled rows.
@@ -107,8 +110,9 @@ def solve_field_shim_waveforms(model, *, total_current_limit_A=30.,
         raise ValueError("max_iterations must be a positive integer.")
     ridge_static = _positive_scalar(static_ridge, "static_ridge")
     ridge_dynamic = _positive_scalar(dynamic_ridge, "dynamic_ridge")
-    if getattr(model, "sequence_kind", "epi") != "epi":
-        raise ValueError("Field shim waveforms currently require a single-RF EPI acquisition.")
+    sequence_kind = getattr(model, "sequence_kind", "epi")
+    if sequence_kind not in {"epi", "spiral"}:
+        raise ValueError("Field shim waveforms require a single-RF EPI or spiral acquisition.")
 
     nc = int(model.nc)
     quality = np.asarray(model.quality_mask, dtype=bool)
@@ -146,7 +150,7 @@ def solve_field_shim_waveforms(model, *, total_current_limit_A=30.,
             or not np.isfinite(ends).all() or np.any(starts < 0)
             or np.any(ends <= starts) or np.any(np.diff(starts) <= 0)
             or np.any(ends[:-1] > starts[1:] + 1e-12)):
-        raise ValueError("Need finite ordered EPI command windows.")
+        raise ValueError("Need finite ordered imaging command windows.")
     start, end = float(starts[0]), float(ends[-1])
     duration = end - start
     count = max(1, int(np.ceil(duration / requested_raster - 1e-12)))
@@ -223,6 +227,9 @@ def solve_field_shim_waveforms(model, *, total_current_limit_A=30.,
     dynamic_residual = dynamic_actual @ compressed_maps - compressed_target
     common = {
         "target": "negative constant measured/model B0 on reliable center voxels",
+        "sequence_kind": sequence_kind,
+        "image_command_state_unit": "spiral turn" if sequence_kind == "spiral" else "Cartesian line",
+        "image_command_states": int(starts.size),
         "amp_limit_A": active_limit, "total_current_limit_A": total_limit,
         "channel_limits_A": limits.tolist(),
         "active_model_channels_1based": (np.flatnonzero(active) + 1).tolist(),
@@ -245,6 +252,8 @@ def solve_field_shim_waveforms(model, *, total_current_limit_A=30.,
                           device=device, requested_raster_s=requested_raster,
                           raster_s=step, min_update_interval_s=minimum_raster,
                           states=count, tau_s=active_tau,
+                          command_grid="independent uniform raster for the conventional field comparison",
+                          constrained_to_image_command_boundaries=False,
                           sirf_samples=int(kernel.size), sirf_kernel=kernel.tolist(),
                           sirf_definition="exp(-k*dt/tau), truncated at 10*tau, normalised to unit DC gain",
                           sirf_sample_timing="current at the end of each command interval",
@@ -265,6 +274,7 @@ def solve_field_shim_waveforms(model, *, total_current_limit_A=30.,
             "upstream_source": "vendored unmodified, MIT licence in _vendor/acdc_optim/LICENSE",
             "compression": compression_report,
             "dynamic_interpretation": "constant B0 cancellation with amplifier-response pre-emphasis",
+            "dynamic_command_grid": "independent uniform raster; image optimization retains its own line/turn boundaries",
             "continuous_hardware_validation": "performed after solving, on exported command timing",
         },
     }

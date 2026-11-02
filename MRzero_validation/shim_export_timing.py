@@ -1,4 +1,4 @@
-"""Verified sequence-trigger origins for contiguous EPI command CSVs.
+"""Verified sequence-trigger origins for contiguous imaging command CSVs.
 
 This module only prepares timing data. It never loads a waveform, configures
 a controller, sends a trigger or changes currents on hardware.
@@ -37,8 +37,9 @@ def sequence_trigger_timing(sequence_path, timing, channel='ext1'):
     """
     import pypulseq as pp
 
-    if timing.get('sequence_kind', 'epi') != 'epi':
-        raise ValueError("First-imaging-trigger export currently supports contiguous EPI only.")
+    kind = timing.get('sequence_kind', 'epi')
+    if kind not in ('epi', 'spiral'):
+        raise ValueError("Trigger export requires contiguous single-excitation EPI or spiral command windows.")
     if not isinstance(channel, str) or not channel:
         raise ValueError("channel must name an output-trigger channel.")
     rf_center = _finite_scalar(timing['rf_center_s'], 'rf_center_s')
@@ -84,12 +85,15 @@ def sequence_trigger_timing(sequence_path, timing, channel='ext1'):
                 or not np.allclose(trigger_times, starts, rtol=0, atol=tolerance)):
             raise ValueError(f"The {channel} trigger train must match every imaging-command start "
                              "in order, without duplicates or additional navigator triggers.")
-        mode, indices = 'per_line', list(range(int(starts.size)))
+        mode = 'per_turn' if kind == 'spiral' else 'per_line'
+        indices = list(range(int(starts.size)))
         alignment_error = float(np.max(np.abs(trigger_times - starts)))
     return dict(trigger_rf_s=event['time_rf_s'], trigger_sequence_s=event['time_sequence_s'],
                 channel=channel, verified_first_imaging_trigger=True,
                 mode=mode, trigger_count=len(selected),
                 verified_per_line_triggers=mode == 'per_line',
+                verified_per_turn_triggers=mode == 'per_turn',
+                command_unit='spiral turn' if kind == 'spiral' else 'EPI line',
                 trigger_times_rf_s=trigger_times.tolist(),
                 trigger_times_sequence_s=[item['time_sequence_s'] for item in selected],
                 trigger_state_indices=indices,
@@ -98,13 +102,13 @@ def sequence_trigger_timing(sequence_path, timing, channel='ext1'):
                 first_imaging_start_rf_s=float(starts[0]), output_events=events,
                 sequence_duration_s=float(elapsed),
                 sequence_file=str(path.resolve()), sequence_sha256=digest,
-                method='Actual Pulseq block clock plus output-event delay; first imaging start and optional per-line train verified',
+                method='Actual Pulseq block clock plus output-event delay; first imaging start and optional per-command train verified',
                 hardware_latency_measured=False, no_hardware_action_performed=True)
 
 
 def waveform_edges_for_origin(model_or_starts, ends=None, *, origin='first_imaging_trigger',
                               trigger_rf_s=None, min_update_interval_s=8e-6):
-    """Return (edges, report) for held EPI commands followed by a final zero.
+    """Return (edges, report) for held imaging commands followed by a final zero.
 
     Pass either a model with line_start_s/line_end_s or the two arrays in
     RF-relative seconds. For trigger-relative export, trigger_rf_s must be
@@ -112,7 +116,7 @@ def waveform_edges_for_origin(model_or_starts, ends=None, *, origin='first_imagi
     signed: the origin can be before or after RF. No trigger is assumed from
     a filename or silently replaced with the first current start.
 
-    Commands are contiguous EPI states. Gaps require explicit zero states and
+    Commands are contiguous imaging states. Gaps require explicit zero states and
     are rejected here. Use export_waveform(..., zero_time_column=False) with
     the returned edges, preserving its initial zero preamble when needed and
     its final zero row. Zeroing the timestamps would discard this timing.
@@ -133,7 +137,7 @@ def waveform_edges_for_origin(model_or_starts, ends=None, *, origin='first_imagi
             or np.any(starts < 0) or np.any(ends <= starts)
             or np.any(np.diff(starts) <= 0)
             or not np.allclose(ends[:-1], starts[1:], rtol=0, atol=1e-12)):
-        raise ValueError("Need finite ordered, contiguous EPI command windows.")
+        raise ValueError("Need finite ordered, contiguous imaging command windows.")
     minimum = _finite_scalar(min_update_interval_s, 'min_update_interval_s')
     if minimum <= 0:
         raise ValueError("min_update_interval_s must be positive.")

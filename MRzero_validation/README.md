@@ -1,5 +1,15 @@
 # Dynamic ACDC shimming with MRzero
 
+### 07 — spiral acquisition
+
+[Notebook 07](07_acdc_spiral_echo32_b0_s0_t2star_MRzero.ipynb) uses one
+32-channel ACDC state per verified spiral-turn trigger. It selects acquisition
+032 and retains the measured-GRE target, 32-echo object, finite voxels,
+disabled channels, amplifier response and hardware checks from 06.
+See the [English spiral guide](SPIRAL_07_README.md) for reconstruction, timing,
+exports and validation. Its image waveform preserves every turn, including
+initial zero states; the 05/06 export convention described below is unchanged.
+
 ### 05/06 — calibration partagée et exports waveform
 
 Les sept notebooks 05/06, copies, V1 et versions ClosedLoop chargent maintenant
@@ -125,6 +135,70 @@ cette même cible. La simulation B0 nul reste un diagnostic physique distinct.
 Les notebooks antérieurs gardent leur coût initial tant qu'aucune cible mesurée
 n'est installée. Redémarrer le noyau après mise à jour des modules ; créer une
 nouvelle session fermée pour employer le nouveau modèle d'entrée.
+
+### 06 — coupe décalée ou inclinée dans le fantôme
+
+Les translations de coupe dans les trois directions sont lues automatiquement
+dans `slice_position_mm` des fichiers Twix. Aucun nouveau paramètre d'offset
+n'est nécessaire dans le notebook. La GRE, l'EPI et le B0 doivent toujours
+décrire la même position, la même épaisseur et la même orientation.
+
+Les grilles mesurées gardent leurs coordonnées physiques absolues. Le champ
+`encoding_origin_m` décrit la projection du centre récepteur sur les axes
+natifs de lecture et de phase ; les noyaux Fourier utilisent les déplacements
+par rapport à ce centre, en conservant les échantillons complexes acquis.
+La préparation 06 utilise la base 3D du quaternion mesuré et sa position
+patient pour interroger les cartes 3D des bobines. Dans le cas axial historique,
+les axes sont `X=patient +y, Y=patient -x`.
+Le notebook principal fixe maintenant `ALIGNMENT_REFERENCE_POSE` sur la pose
+031 ayant donné un résultat expérimental satisfaisant. Ce paramètre reste
+constant lorsque `INPUT_DIR` ou la pose courante change. La rotation Q est
+exprimée une fois dans ce repère de référence ; elle ne se recentre plus sur
+chaque coupe. Le centre courant et la normale sont transformés par le même
+recalage 3D, car les bobines restent fixes pendant un déplacement console.
+La profondeur et les points répartis dans l'épaisseur servent aussi aux requêtes
+3D ; les cartes ne sont jamais extrapolées hors de leur couverture valide.
+Les centres, coins et sous-spins d'épaisseur suivent tous le plan mesuré,
+y compris pour une coupe oblique. Cela corrige la géométrie de la coupe ;
+la cartographie B0 2D reste extrudée dans l'épaisseur et ne fournit pas une
+mesure de sa variation suivant la normale.
+
+Le modèle 06 reste exprimé autour du centre de coupe. Son acquisition conserve
+`native_frame_origin_m` pour retrouver les coordonnées absolues de la GRE lors
+de l'installation de la cible. Les coins utilisés pour estimer le bruit suivent
+le centre du FOV. Les acquisitions centrées conservent leur convention initiale.
+Les orientations incohérentes entre acquisitions restent rejetées. Cette prise
+en charge concerne le chemin Twix du notebook 06 ; l'ancien préparateur de
+calibration MATLAB et le lecteur DICOM gardent leurs conventions propres.
+
+La prise en charge géométrique est conditionnelle au recalage physique déclaré
+dans `CALIBRATION_PARAMETERS.patient_to_source_m`. Cette affine fixe transforme
+les coordonnées patient en coordonnées du volume ACDC, y compris le centre de
+coupe. L'identité suppose les mêmes axes, les mêmes signes et la même origine.
+Un alignement `ALIGNMENT_*` trouvé sur une coupe axiale centrée ne détermine pas
+à lui seul une transformation 3D scanner/bobines. La case
+`registration_confirmed=True` est une déclaration, pas une mesure du recalage.
+
+Avec la référence fixe, poser `Q3=blockdiag(Q,1)` et
+`G(p)=c_ref+R_ref@Q3@R_ref.T@(p-c_ref)`. La requête source est
+`A@G(c_slice+R_slice@(x,y,dz))`. Cette formule retrouve le calcul historique
+sur la pose de référence et conserve une transformation patient→source fixe
+sur les autres coupes. `alignment_reference_pose=None` conserve l'ancien
+alignement autour de chaque coupe pour les autres notebooks ou un diagnostic.
+Q et P continuent à définir la représentation Fourier commune `O=P@Q` ; cette
+représentation est indépendante du recalage physique des cartes.
+
+La préparation archive désormais `report.calibration_pose` : centre et base
+mesurés, affine déclarée, transformation complète coupe→source, transformation
+effective patient→source, référence d'alignement, bornes du volume et points conservés.
+Le notebook affiche la pose avant simulation et sauvegarde aussi les coordonnées
+patient natives, recalées et source des sous-spins. Les tests sur champs affines 3D couvrent les plans axial,
+sagittal, coronal, oblique et normale inversée à z = −50, 0 et +50 mm ; ils ne
+constituent pas une validation expérimentale des axes du fichier de calibration.
+
+Après mise à jour des lecteurs et du modèle, redémarrer le noyau et relancer
+le notebook depuis le début ; changer seulement `INPUT_DIR` dans un noyau ayant
+déjà importé les anciens modules ne recharge pas ces fonctions.
 
 ### 06 — fortes distorsions et repliement EPI
 

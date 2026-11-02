@@ -20,6 +20,7 @@ from prepare_acdc_inputs import read_scan
 from read_acdc_sequence import read_sequence
 from resample_acdc_maps import resample_to_grid
 from measured_continuous import reconstruct_receivers
+from slice_geometry import encoding_origin, slice_basis
 
 
 def _frame_matrix(value):
@@ -99,8 +100,11 @@ def compare_registered_images(reference, baseline, corrected, *, frame_matrix=No
     for label, image in zip(labels[1:], images[1:]):
         rmse = float(np.sqrt(np.mean((image[mask] - images[0][mask])**2)))
         rows.append({"label": label, "RMSE": rmse, "NRMSE_percent": 100 * rmse / reference_rms})
-    displayX = matrix[0, 0] * targetX + matrix[0, 1] * targetY
-    displayY = matrix[1, 0] * targetX + matrix[1, 1] * targetY
+    origin = np.asarray(baseline.get("encoding_origin_m", np.zeros(2)))
+    if (origin.shape != (2,) or np.iscomplexobj(origin) or not np.isfinite(origin).all()):
+        raise ValueError("encoding_origin_m must contain two finite coordinates.")
+    displayX = matrix[0, 0] * (targetX-origin[0]) + matrix[0, 1] * (targetY-origin[1])
+    displayY = matrix[1, 0] * (targetX-origin[0]) + matrix[1, 1] * (targetY-origin[1])
     report = {
         "comparison_grid": "native unshimmed EPI grid", "image_shape": list(targetX.shape),
         "requested_pixels": int(requested.sum()), "common_pixels": int(mask.sum()),
@@ -111,6 +115,7 @@ def compare_registered_images(reference, baseline, corrected, *, frame_matrix=No
         "gain_fitted_from": "unshimmed baseline only" if normalize else "no gain fitting",
         "same_gain_for_all_corrected_scans": True, "same_mask_for_all_scans": True,
         "frame_matrix": matrix.tolist(), "native_array_order_preserved": True,
+        "display_origin_native_m": origin.tolist(),
         "interpolation": "linear in native physical coordinates; no extrapolation",
         "registration_applied": False, "nonrigid_registration_applied": False,
         "waveform_match_verified": False,
@@ -125,9 +130,9 @@ def compare_registered_images(reference, baseline, corrected, *, frame_matrix=No
 def _scan_grid(image, metadata, acquisition):
     ny, nx = np.asarray(image).shape
     fov = np.asarray(acquisition["FOV_m"], float)
-    sag, cor, _ = np.asarray(metadata["slice_position_mm"], float) * .001
-    return np.meshgrid((np.arange(nx) - nx // 2) * fov[0] / nx + cor,
-                       (np.arange(ny) - ny // 2) * fov[1] / ny - sag)
+    origin = encoding_origin(metadata)
+    return np.meshgrid((np.arange(nx) - nx // 2) * fov[0] / nx + origin[0],
+                       (np.arange(ny) - ny // 2) * fov[1] / ny + origin[1])
 
 
 def _check_scan(metadata, acquisition, timing):
@@ -148,9 +153,7 @@ def _check_scan(metadata, acquisition, timing):
 def _check_patient_geometry(reference, other, label):
     if not np.allclose(reference["slice_position_mm"], other["slice_position_mm"], rtol=0, atol=1e-3):
         raise ValueError(f"{label} and GRE slice centres differ; comparison does not perform registration.")
-    q0, q1 = (np.asarray(item["slice_quaternion_wxyz"], float) for item in (reference, other))
-    if (q0.shape != (4,) or q1.shape != (4,) or not np.isfinite(q0).all() or not np.isfinite(q1).all()
-            or not np.isclose(abs(np.dot(q0, q1)), 1, rtol=0, atol=1e-8)):
+    if not np.allclose(slice_basis(reference), slice_basis(other), rtol=0, atol=1e-6):
         raise ValueError(f"{label} and GRE slice orientations differ; comparison does not perform registration.")
 
 
@@ -194,7 +197,9 @@ def compare_measured_scan_set(inputs, corrected_scan_paths, *, corrected_sequenc
         baseline = reconstructed
     X, Y = _scan_grid(baseline, baseline_metadata, acquisition)
     reference = {"image": gre["magnitude"], "X_m": gre["X_m"], "Y_m": gre["Y_m"], "label": "GRE reference"}
-    base_record = {"image": baseline, "X_m": X, "Y_m": Y, "label": "Without ACDC"}
+    native_origin = encoding_origin(baseline_metadata)
+    base_record = {"image": baseline, "X_m": X, "Y_m": Y, "label": "Without ACDC",
+                   "encoding_origin_m": native_origin}
     if corrected_sequence_path is None:
         corrected_acquisition, corrected_timing = acquisition, timing
     else:
@@ -223,7 +228,10 @@ def compare_measured_scan_set(inputs, corrected_scan_paths, *, corrected_sequenc
                               dwell_s=float(metadata["dwell_s"]))
             skipped.append(record)
             continue
-        image, reconstruction_reports[path.name] = reconstruct_receivers(diagnostics, corrected_acquisition)
+        # The receiver center belongs to this measurement, including an
+        # explicitly supplied corrected sequence with no patient metadata.
+        current_acquisition = dict(corrected_acquisition, encoding_origin_m=encoding_origin(metadata))
+        image, reconstruction_reports[path.name] = reconstruct_receivers(diagnostics, current_acquisition)
         scanX, scanY = _scan_grid(image, metadata, corrected_acquisition)
         corrected.append({"image": image, "X_m": scanX, "Y_m": scanY, "label": path.name})
         metadata_records.append(metadata)

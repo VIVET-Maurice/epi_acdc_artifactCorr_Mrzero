@@ -129,13 +129,17 @@ class LiveOptimizationPlot:
             axis.set_ylabel("y (mm)" if extent_mm is not None else "Row")
             # A full-image mask has no interior boundary to draw.
             if self.roi_mask is not None and not self.roi_mask.all():
+                # contour(origin="upper", extent=None) reverses row coordinates
+                # and uses half-pixel centres unlike imshow's default extent.
+                # Reuse the actual image bounds so both artists share exactly
+                # the same pixel centres, with or without physical coordinates.
                 axis.contour(
                     self.roi_mask.astype(float),
                     levels=[0.5],
                     colors="limegreen",
                     linewidths=0.6,
                     origin=image_origin,
-                    extent=extent_mm,
+                    extent=magnitude_artists[0].get_extent(),
                 )
         self.figure.colorbar(
             magnitude_artists[0], ax=image_axes[:3], shrink=0.75, pad=0.02, label="Magnitude (a.u.)"

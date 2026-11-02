@@ -146,6 +146,19 @@ class NativeEPITwinTests(unittest.TestCase):
         self.assertGreater(result["report"]["native_blocks_simulated"], 0)
         self.assertFalse(result["report"]["point_magnetization_cache"])
 
+    def test_receiver_offset_preserves_native_complex_signal_and_image(self):
+        acq, X, Y, amplitude, b0, support, rate = fixture(multiple_rf=True)
+        origin = np.asarray([.031, -.017])
+        acq["encoding_origin_m"] = origin
+        result = NativeEPITwin(acq, X + origin[0], Y + origin[1], amplitude,
+                              b0, support, rate_sInv=rate,
+                              amplitude_reference_time_s=.004, sample_chunk=4).simulate()
+        expected = direct_oracle(acq, X, Y, amplitude, b0, support, rate, .004)
+        np.testing.assert_allclose(result["kdata"], expected[0], rtol=2e-5, atol=2e-6)
+        np.testing.assert_allclose(result["coil_images"], expected[1], rtol=2e-5, atol=2e-6)
+        np.testing.assert_allclose(result["image"], expected[2], rtol=2e-5, atol=2e-6)
+        self.assertEqual(result["report"]["encoding_origin_m"], origin.tolist())
+
     def test_zero_b0_twin_preserves_object_relaxation_and_acquisition(self):
         arguments = fixture()
         twin = NativeEPITwin(*arguments[:6], rate_sInv=arguments[6], amplitude_reference_time_s=.003)

@@ -26,8 +26,9 @@ def acquisition_fixture():
 
 def direct_reconstruction(kdata, acquisition, X_m, Y_m):
     kx, ky = acquisition['kx_mInv'], acquisition['ky_mInv']
-    kernel = np.exp(2j * np.pi * (kx.reshape(-1, 1) * X_m.reshape(1, -1)
-                                + ky.reshape(-1, 1) * Y_m.reshape(1, -1))) / kx.size
+    origin = acquisition.get('encoding_origin_m', [0., 0.])
+    kernel = np.exp(2j * np.pi * (kx.reshape(-1, 1) * (X_m - origin[0]).reshape(1, -1)
+                                + ky.reshape(-1, 1) * (Y_m - origin[1]).reshape(1, -1))) / kx.size
     values = np.asarray(kdata)
     return (values.reshape(values.shape[:-2] + (-1,)) @ kernel).reshape(values.shape)
 
@@ -153,6 +154,46 @@ class FrameReconstructionTests(unittest.TestCase):
             left = torch.vdot(operator.image(data).ravel(), target.ravel())
             right = torch.vdot(data.ravel(), operator.adjoint(target).ravel())
             self.assertLess(float(abs(left - right)), 2e-15)
+
+    def test_offset_origin_rotates_with_k_and_absolute_output_grid(self):
+        acquisition = acquisition_fixture()
+        origin = np.asarray([.027, -.013])
+        acquisition['encoding_origin_m'] = origin.copy()
+        data = np.arange(24).reshape(2, 3, 4) * (1. + .3j)
+        native = ContinuousReconstruction(acquisition, 'cpu', torch.float64, sample_chunk=3)
+        for matrix in (inplane_matrix(37), inplane_matrix(90, mirror_y=True)):
+            framed = rotate_acquisition_k(acquisition, matrix=matrix)
+            np.testing.assert_allclose(framed['encoding_origin_m'], matrix @ origin, atol=1e-17)
+            operator = FrameReconstruction(framed, 'cpu', torch.float64,
+                                           frame_matrix=matrix, sample_chunk=3)
+            expected_X, expected_Y = rotate_points(native.X_m, native.Y_m, matrix=matrix)
+            np.testing.assert_allclose(operator.X_m, expected_X, atol=2e-17)
+            np.testing.assert_allclose(operator.Y_m, expected_Y, atol=2e-17)
+            np.testing.assert_allclose(operator.numpy_image(data), native.numpy_image(data),
+                                       rtol=2e-14, atol=2e-14)
+            np.testing.assert_allclose(operator.numpy_image(data),
+                direct_reconstruction(data, framed, operator.X_m, operator.Y_m),
+                rtol=2e-14, atol=2e-14)
+            np.testing.assert_allclose(operator.report['encoding_origin_m'], matrix @ origin,
+                                       atol=2e-17)
+        np.testing.assert_array_equal(acquisition['encoding_origin_m'], origin)
+
+    def test_native_source_origin_is_metadata_without_frame_rotation(self):
+        acquisition = acquisition_fixture()
+        origin = np.asarray([.027, -.013])
+        acquisition['native_frame_origin_m'] = origin.copy()
+        matrix = inplane_matrix(37, mirror_x=True)
+        framed = rotate_acquisition_k(acquisition, matrix=matrix)
+        operator = FrameReconstruction(framed, 'cpu', torch.float64, frame_matrix=matrix)
+        native = ContinuousReconstruction(acquisition, 'cpu', torch.float64)
+        np.testing.assert_array_equal(framed['native_frame_origin_m'], origin)
+        np.testing.assert_array_equal(operator.native_frame_origin_m, origin)
+        source_X, source_Y = rotate_points(operator.X_m, operator.Y_m, matrix=matrix.T)
+        np.testing.assert_allclose(source_X + operator.native_frame_origin_m[0],
+                                   native.X_m + origin[0], atol=3e-17)
+        np.testing.assert_allclose(source_Y + operator.native_frame_origin_m[1],
+                                   native.Y_m + origin[1], atol=3e-17)
+        np.testing.assert_array_equal(operator.report['native_frame_origin_m'], origin)
 
     def test_angular_constructor_and_explicit_matrix_have_identical_output(self):
         acquisition = rotate_acquisition_k(acquisition_fixture(), 37)

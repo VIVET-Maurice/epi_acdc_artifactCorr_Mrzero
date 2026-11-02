@@ -19,6 +19,12 @@ from prepare_acdc_simulation_grid import prepare_simulation_reference
 from resample_acdc_maps import resample_to_grid
 from measured_continuous import reconstruct_receivers, reconstruct_b0_echoes
 from echo_object import fit_echo_object
+from slice_geometry import encoding_origin, slice_basis
+
+
+def _encoding_origin(metadata):
+    """Physical plane-coordinate origin, using the measured slice basis."""
+    return encoding_origin(metadata)
 
 
 def _field_echo_count(value, available):
@@ -55,7 +61,7 @@ def _check_slice_geometry(reference_metadata, scan_metadata, b0_metadata):
                     checked.append(f'{left_name}/{right_name}: {key}')
             key = 'slice_quaternion_wxyz'
             if key in left and key in right:
-                if not np.isclose(abs(np.dot(left[key], right[key])), 1, atol=1e-8):
+                if not np.allclose(slice_basis(left), slice_basis(right), rtol=0, atol=1e-6):
                     raise ValueError(f'{left_name} and {right_name} describe different readout/phase orientations.')
                 checked.append(f'{left_name}/{right_name}: {key}')
     return checked
@@ -73,13 +79,9 @@ def _read_nominal_reference(path):
     magnitude, metadata, diagnostics = read_scan(path, None, return_intermediates=True)
     if metadata['navigator_count'] != 0 or len(set(metadata['polarity'])) != 1:
         raise ValueError('A nominal reference requires mono-echo GRE without EPI navigators or alternating rows.')
-    quaternion = np.asarray(metadata['slice_quaternion_wxyz'], float)
-    expected_quaternion = np.asarray([1, 0, 0, 1], float) / np.sqrt(2)
-    if not np.isclose(abs(np.dot(quaternion, expected_quaternion)), 1, atol=1e-8):
-        raise ValueError('The reference Twix supports the existing axial orientation only.')
+    basis = slice_basis(metadata)
     center = np.asarray(metadata['slice_position_mm'], float)
-    if np.any(abs(center[:2]) > 1e-3):
-        raise ValueError('The reference Twix requires a centered in-plane origin.')
+    origin = _encoding_origin(metadata)
     fov = np.asarray(metadata['FOV_m'], float)
     thickness = float(metadata['slice_thickness_mm'])
     te, tr, dwell = (float(metadata[key]) for key in ('TE_s', 'TR_s', 'dwell_s'))
@@ -91,20 +93,22 @@ def _read_nominal_reference(path):
     if nx % 2 or ny % 2:
         raise ValueError('A nominal reference requires an even centered Cartesian matrix.')
     dx_mm, dy_mm = fov * 1000 / np.asarray([nx, ny])
-    x = (np.arange(nx) - nx // 2) * dx_mm * 1e-3 + center[1] * 1e-3
-    y = (np.arange(ny) - ny // 2) * dy_mm * 1e-3 - center[0] * 1e-3
+    x = (np.arange(nx) - nx // 2) * dx_mm * 1e-3 + origin[0]
+    y = (np.arange(ny) - ny // 2) * dy_mm * 1e-3 + origin[1]
     X, Y = np.meshgrid(x, y)
     gre = dict(magnitude=magnitude, X_m=X, Y_m=Y,
-        position_mm=center + [ny // 2 * dy_mm, -nx // 2 * dx_mm, 0],
-        spacing_mm=np.asarray([dy_mm, dx_mm]), orientation=np.asarray([0, 1, 0, -1, 0, 0], float),
+        position_mm=center - nx // 2 * dx_mm * basis[:, 0] - ny // 2 * dy_mm * basis[:, 1],
+        spacing_mm=np.asarray([dy_mm, dx_mm]), orientation=basis[:, :2].T.reshape(-1),
         slice_thickness_mm=thickness, TE_s=te, TR_s=tr,
-        flip_deg=float(metadata['header_flip_deg']), twix_metadata=metadata)
+        flip_deg=float(metadata['header_flip_deg']), twix_metadata=metadata,
+        encoding_origin_m=origin.copy())
     kx, ky = np.meshgrid((np.arange(nx) - nx // 2) / fov[0],
                          (np.arange(ny) - ny // 2) / fov[1])
     acquisition = dict(kx_mInv=kx, ky_mInv=ky, FOV_m=fov,
         sequence_kind='gre', TE_s=te, TR_s=tr, dwell_s=dwell,
         flip_deg=gre['flip_deg'], polarity=np.asarray(metadata['polarity']),
-        trajectory_source='nominal centered Cartesian grid from Twix headers')
+        trajectory_source='nominal centered Cartesian grid from Twix headers',
+        encoding_origin_m=origin.copy())
     diagnostics['reference_trajectory_source'] = acquisition['trajectory_source']
     return gre, diagnostics, acquisition
 
@@ -260,6 +264,7 @@ def read_twin_inputs(folder, *, scan_sequence_path=None, scan_path=None,
         reference_timing = dict(sequence_kind='gre', trajectory_source=reference_acquisition['trajectory_source'])
         reference_report.update(raw_cartesian_validated=True, sequence_verified=False,
             image_shape=list(gre['magnitude'].shape), trajectory_source=reference_acquisition['trajectory_source'])
+    reference_acquisition['encoding_origin_m'] = _encoding_origin(gre.get('twix_metadata', {}))
     gre['reference_sequence_validation'] = reference_report
     paths = dict(reference=reference_scan_path, b0=b0_scan_path,
         scan=scan_path, scan_sequence=scan_sequence_path,
@@ -270,6 +275,7 @@ def read_twin_inputs(folder, *, scan_sequence_path=None, scan_path=None,
     gre['magnitude'], _ = reconstruct_receivers(gd, reference_acquisition,
         device=reconstruction_device, dtype=reconstruction_dtype)
     scan, scan_metadata, sd = read_scan(paths['scan'], acquisition, return_intermediates=True)
+    acquisition['encoding_origin_m'] = _encoding_origin(scan_metadata)
     scan, _ = reconstruct_receivers(sd, acquisition,
         device=reconstruction_device, dtype=reconstruction_dtype)
     check_physical_geometry(gre, scan_metadata, acquisition,
@@ -331,7 +337,9 @@ def prepare_echo_object(inputs, threshold_fraction=.04, background_corner_m=.085
         raise ValueError('Finite native X_m/Y_m grids must match coil_images.')
     noise_source = 'explicit signal-free mask' if noise_mask is not None else 'explicit physical corners'
     if noise_mask is None:
-        noise_mask = (abs(X) > background_corner_m) & (abs(Y) > background_corner_m)
+        origin = _encoding_origin(raw.get('metadata', {}))
+        noise_mask = ((abs(X-origin[0]) > background_corner_m)
+                      & (abs(Y-origin[1]) > background_corner_m))
     else:
         noise_mask = np.asarray(noise_mask)
         if noise_mask.shape != shape or not np.isin(noise_mask, [0, 1]).all():
@@ -481,6 +489,8 @@ def frame_acquisition(acquisition, rotation_deg=180):
     sign = 1 if rotation_deg == 0 else -1
     for key in ('kx_mInv','ky_mInv'):
         result[key] = sign*np.asarray(acquisition[key])
+    if 'encoding_origin_m' in acquisition:
+        result['encoding_origin_m'] = sign*np.asarray(acquisition['encoding_origin_m'])
     return result
 
 

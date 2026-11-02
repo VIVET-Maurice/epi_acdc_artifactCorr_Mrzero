@@ -121,13 +121,26 @@ class PreparationTests(unittest.TestCase):
         acquisition = {"FOV_m": [.2, .2]}
         cases = [("FOV_m", [.25, .2], "field of view"),
                  ("slice_position_mm", [0, 0, 4], "different slice planes"),
-                 ("slice_position_mm", [4, 0, 0], "centered Twix"),
                  ("slice_quaternion_wxyz", [1, 0, 0, 0], "orientation differs")]
         for key, value, error in cases:
             changed = {**scan, key: value}
             with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, error):
                 check_physical_geometry(gre, changed, acquisition, self.mask, self.X, self.Y,
                                         dicom_input=True)
+
+    def test_translated_axial_fov_uses_measured_origin_and_keeps_coverage_guard(self):
+        origin = np.asarray([.19, -.17])
+        scan = {"FOV_m": [.2, .2], "slice_position_mm": [170, 190, 0],
+                "slice_quaternion_wxyz": (np.asarray([1, 0, 0, 1]) / np.sqrt(2)).tolist()}
+        gre = {"position_mm": [70, 90, 0]}
+        acquisition = {"FOV_m": [.2, .2], "encoding_origin_m": origin}
+        X, Y = self.X + origin[0], self.Y + origin[1]
+        check_physical_geometry(gre, scan, acquisition, self.mask, X, Y, dicom_input=True)
+        with self.assertRaisesRegex(ValueError, "outside the scan field of view"):
+            check_physical_geometry(gre, scan, acquisition, self.mask, X + .2, Y, dicom_input=True)
+        with self.assertRaisesRegex(ValueError, "encoding origin disagrees"):
+            check_physical_geometry(gre, scan, {**acquisition, "encoding_origin_m": [0, 0]},
+                                    self.mask, X, Y, dicom_input=True)
 
     def test_sequence_matches_existing_notebook_export(self):
         prepared = ROOT / "prepared" / "experiment_input.mat"
@@ -504,14 +517,68 @@ class TwixReferenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     read_gre(Path("reference.dat"), {**acquisition, key: value})
 
-    def test_unsupported_reference_orientation_and_offset_rejected(self):
-        for field, value, error in (("Quaternion", [1, 0, 0, 0], "axial orientation"),
-                                    ("SlicePos", SimpleNamespace(Sag=3, Cor=0, Tra=7), "centered in-plane")):
-            twix, acquisition, _ = self.fixture()
-            setattr(twix["mdb"][0].mdh.SliceData, field, value)
-            with self.subTest(field=field), patch("twixtools.read_twix", return_value=[twix]):
-                with self.assertRaisesRegex(ValueError, error):
-                    read_gre(Path("reference.dat"), acquisition)
+    def test_translated_reference_retains_patient_grid_and_local_reconstruction(self):
+        from prepare_acdc_calibration import target_patient_grid
+        twix, acquisition, images = self.fixture()
+        center = np.asarray([31., -47., -19.])
+        twix["mdb"][0].mdh.SliceData.SlicePos = SimpleNamespace(
+            Sag=center[0], Cor=center[1], Tra=center[2])
+        with patch("twixtools.read_twix", return_value=[twix]):
+            reference, diagnostics = read_gre(Path("reference.dat"), acquisition,
+                                               return_intermediates=True)
+        origin = center[[1, 0]] * [1e-3, -1e-3]
+        np.testing.assert_allclose(reference["encoding_origin_m"], origin)
+        np.testing.assert_allclose(reference["twix_metadata"]["encoding_origin_m"], origin)
+        np.testing.assert_allclose(reference["X_m"][0], (np.arange(8)-4)*.025 + origin[0])
+        np.testing.assert_allclose(reference["Y_m"][:, 0], (np.arange(6)-3)*.03 + origin[1])
+        np.testing.assert_allclose(reference["position_mm"], center + [90, -100, 0])
+        np.testing.assert_allclose(target_patient_grid({"geometry": reference})[3, 4], center*1e-3)
+        np.testing.assert_allclose(diagnostics["coil_images"], images, atol=1e-12)
+        np.testing.assert_allclose(reference["magnitude"], np.sqrt(np.sum(abs(images)**2, axis=1)), atol=1e-12)
+        check_physical_geometry(reference, reference["twix_metadata"],
+                                {**acquisition, "encoding_origin_m": origin}, np.ones((6, 8), bool),
+                                reference["X_m"], reference["Y_m"], dicom_input=False)
+
+    def test_oblique_reference_retains_true_patient_grid_and_local_coordinates(self):
+        twix, acquisition, images = self.fixture()
+        angle = np.deg2rad(.435)
+        q = np.asarray([np.cos(angle/2), np.sin(angle/2), -np.sin(angle/2), np.cos(angle/2)]) / np.sqrt(2)
+        geometry = twix["mdb"][0].mdh.SliceData
+        geometry.Quaternion = q
+        center = np.asarray([12., -7., 40.])
+        geometry.SlicePos = SimpleNamespace(Sag=center[0], Cor=center[1], Tra=center[2])
+        u, v = np.asarray([0., np.cos(angle), np.sin(angle)]), np.asarray([-1., 0., 0.])
+        origin = np.asarray([u@center, v@center])*.001
+        with patch("twixtools.read_twix", return_value=[twix]):
+            reference = read_gre(Path("reference.dat"), acquisition)
+        np.testing.assert_allclose(reference["magnitude"], np.sqrt(np.sum(abs(images)**2, axis=1)), atol=1e-12)
+        np.testing.assert_allclose(reference["X_m"][0], (np.arange(8)-4)*.025 + origin[0])
+        np.testing.assert_allclose(reference["Y_m"][:, 0], (np.arange(6)-3)*.03 + origin[1])
+        np.testing.assert_allclose(reference["position_mm"], center - 100*u - 90*v, atol=1e-12)
+        np.testing.assert_allclose(reference["orientation"], np.concatenate([u, v]), atol=1e-12)
+        row, column = np.indices(reference["magnitude"].shape)
+        patient = (reference["position_mm"] + column[..., None]*reference["spacing_mm"][1]
+                   *reference["orientation"][:3] + row[..., None]*reference["spacing_mm"][0]
+                   *reference["orientation"][3:])*.001
+        np.testing.assert_allclose(patient[3, 4], center*.001, atol=1e-12)
+        np.testing.assert_allclose(patient[4, 5], center*.001 + .025*u + .03*v, atol=1e-12)
+        check_physical_geometry(reference, reference["twix_metadata"],
+                                {**acquisition, "encoding_origin_m": origin}, np.ones((6, 8), bool),
+                                reference["X_m"], reference["Y_m"], dicom_input=False)
+        other_q = q.copy()
+        other_q[1:3] *= -1
+        wrong = {**reference["twix_metadata"], "slice_quaternion_wxyz": other_q}
+        wrong.pop("encoding_origin_m")
+        with self.assertRaisesRegex(ValueError, "orientations"):
+            check_physical_geometry(reference, wrong, acquisition, np.ones((6, 8), bool),
+                                    reference["X_m"], reference["Y_m"], dicom_input=False)
+
+    def test_nonunit_reference_quaternion_rejected(self):
+        twix, acquisition, _ = self.fixture()
+        twix["mdb"][0].mdh.SliceData.Quaternion = [1, 0, 0, 1]
+        with patch("twixtools.read_twix", return_value=[twix]):
+            with self.assertRaisesRegex(ValueError, "quaternion"):
+                read_gre(Path("reference.dat"), acquisition)
 
     def test_reference_and_scan_twix_plane_or_rotation_mismatch_rejected(self):
         twix, acquisition, _ = self.fixture()
@@ -523,7 +590,9 @@ class TwixReferenceTests(unittest.TestCase):
                                   ("slice_position_mm", [1, 0, 7], "different slice planes"),
                                   ("slice_quaternion_wxyz", [1, 0, 0, 0], "orientations")):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, error):
-                check_physical_geometry(reference, {**metadata, key: value}, acquisition,
+                changed = {**metadata, key: value}
+                changed.pop("encoding_origin_m", None)
+                check_physical_geometry(reference, changed, acquisition,
                                         support, reference["X_m"], reference["Y_m"], dicom_input=False)
         check_physical_geometry(reference, {**metadata, "slice_quaternion_wxyz":
                                            (-np.asarray(metadata["slice_quaternion_wxyz"])).tolist()},

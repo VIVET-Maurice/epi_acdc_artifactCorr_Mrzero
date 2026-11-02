@@ -20,6 +20,8 @@ import numpy as np
 from scipy import ndimage
 
 from read_acdc_sequence import _events
+from receiver_channels import receiver_channel_ids
+from slice_geometry import encoding_origin, normalized_quaternion, slice_basis
 
 
 def read_b0_sequence(path: Path) -> dict:
@@ -217,6 +219,9 @@ def b0_from_coil_images(coils, echo_times_s, *, phase_sign=-1, magnitude_fractio
 def read_b0_coil_images(path: Path, sequence_path: Path | None = None) -> dict:
     """Read and reconstruct each B0 echo before estimating its field.
 
+    ``X_m`` and ``Y_m`` are coordinates in the measured readout/phase frame,
+    including the projected slice translation. Metadata retains ``encoding_origin_m`` for
+    simulations/reconstruction that operate in the local Fourier frame.
     ``kspace`` and ``coil_images`` have dimensions
     ``(echo, receiver, phase, readout)``. This first stage allows the notebook
     to display the measured echoes even when no reliable B0 mask remains.
@@ -237,6 +242,7 @@ def read_b0_coil_images(path: Path, sequence_path: Path | None = None) -> dict:
             or {(block.cLin, block.cEco) for block in lines} != {(y, e) for y in range(ny) for e in range(ne)}
             or any(block.data.shape != (channels, nx) for block in lines)):
         raise ValueError("B0 Twix needs unique complete even Cartesian rows at each echo and constant receiver/sample counts.")
+    channel_ids = receiver_channel_ids(lines, channels, label='B0 Twix')
     for counter in ("cAve", "cSlc", "cPar", "cPhs", "cRep", "cSet"):
         if len({getattr(block, counter) for block in lines}) != 1:
             raise ValueError("B0 Twix must contain one slice, average and repetition.")
@@ -256,19 +262,15 @@ def read_b0_coil_images(path: Path, sequence_path: Path | None = None) -> dict:
 
     first_geometry = lines[0].mdh.SliceData
     position = slice_position(first_geometry)
-    quaternion = np.asarray(list(first_geometry.Quaternion), float)
-    if (not np.isfinite(position).all() or not np.isfinite(quaternion).all()
-            or not np.isclose(np.linalg.norm(quaternion), 1, atol=1e-6)):
+    quaternion = normalized_quaternion(list(first_geometry.Quaternion))
+    if not np.isfinite(position).all():
         raise ValueError("B0 Twix has invalid slice geometry.")
-    quaternion /= np.linalg.norm(quaternion)
-    expected_quaternion = np.asarray([1, 0, 0, 1], float) / np.sqrt(2)
-    if not np.isclose(abs(np.dot(quaternion, expected_quaternion)), 1, atol=1e-8):
-        raise ValueError("B0 Twix supports the existing axial readout +patient y / phase -patient x frame only; "
-                         "export a registered B0 NPZ for another orientation.")
+    basis = slice_basis({"slice_quaternion_wxyz": quaternion})
     for block in lines:
         geometry = block.mdh.SliceData
         if (not np.allclose(slice_position(geometry), position, rtol=0, atol=1e-3)
-                or not np.isclose(abs(np.dot(list(geometry.Quaternion), quaternion)), 1, atol=1e-6)):
+                or not np.allclose(slice_basis({"slice_quaternion_wxyz": list(geometry.Quaternion)}),
+                                   basis, rtol=0, atol=1e-6)):
             raise ValueError("B0 slice position/orientation changes within the measurement.")
     te = np.asarray(header["alTE"][:ne], float) * 1e-6
     _echo_spacing(te)
@@ -279,6 +281,10 @@ def read_b0_coil_images(path: Path, sequence_path: Path | None = None) -> dict:
                 "slice_position_mm": position.tolist(), "slice_quaternion_wxyz": quaternion.tolist(),
                 "slice_thickness_mm": float(slices[0]["dThickness"]), "polarity": polarity,
                 "source_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    metadata["encoding_origin_m"] = encoding_origin(metadata).tolist()
+    if channel_ids is not None:
+        metadata['receiver_channel_ids'] = channel_ids
+        metadata['receiver_channel_id_source'] = 'Twix ChannelId headers in complex-data receiver-row order'
     if sequence_path is not None:
         sequence = read_b0_sequence(sequence_path)
         for key, tolerance in (("image_shape", 0), ("echo_count", 0), ("polarity", 0),
@@ -298,8 +304,9 @@ def read_b0_coil_images(path: Path, sequence_path: Path | None = None) -> dict:
     axes = (2, 3)
     coils = np.fft.fftshift(np.fft.ifftn(np.fft.ifftshift(kspace, axes=axes), axes=axes), axes=axes)
     fov = metadata["FOV_m"]
-    x = (np.arange(nx) - nx // 2) * fov[0] / nx + position[1] * 1e-3
-    y = (np.arange(ny) - ny // 2) * fov[1] / ny - position[0] * 1e-3
+    origin = encoding_origin(metadata)
+    x = (np.arange(nx) - nx // 2) * fov[0] / nx + origin[0]
+    y = (np.arange(ny) - ny // 2) * fov[1] / ny + origin[1]
     X, Y = np.meshgrid(x, y)
     return {"kspace": kspace, "coil_images": coils, "X_m": X, "Y_m": Y,
             "array_axes": ["echo", "receiver", "phase", "readout"],

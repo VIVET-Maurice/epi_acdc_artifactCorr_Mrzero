@@ -122,8 +122,15 @@ def configure_measured_gre_target(model, reference, *, baseline_image=None,
     if (matrix.shape != (2, 2) or not np.isfinite(matrix).all()
             or not np.allclose(matrix.T @ matrix, np.eye(2), rtol=0, atol=1e-10)):
         raise ValueError("frame_matrix must be a finite real orthogonal 2x2 matrix.")
-    native_targetX = matrix[0, 0] * targetX + matrix[1, 0] * targetY
-    native_targetY = matrix[0, 1] * targetX + matrix[1, 1] * targetY
+    # Echo models encode local slice coordinates; measured GRE grids retain
+    # their absolute patient placement. This origin is distinct from the
+    # encoding origin of a generic absolute-coordinate reconstruction.
+    native_origin = np.asarray(getattr(operator, 'native_frame_origin_m', np.zeros(2)))
+    if (native_origin.shape != (2,) or np.iscomplexobj(native_origin)
+            or not np.isfinite(native_origin).all()):
+        raise ValueError('native_frame_origin_m must contain two finite coordinates.')
+    native_targetX = matrix[0, 0] * targetX + matrix[1, 0] * targetY + native_origin[0]
+    native_targetY = matrix[0, 1] * targetX + matrix[1, 1] * targetY + native_origin[1]
     # A joint orthogonal transform followed by its inverse can move an exact
     # first/last source center a few ulps outside the interpolation interval.
     # Snap only floating-point roundoff, never a physical coverage gap.
@@ -192,6 +199,7 @@ def configure_measured_gre_target(model, reference, *, baseline_image=None,
         native_reference_resolution_preserved=True, added_measured_spatial_detail=False,
         interpolation="linear in native physical XY coordinates; no extrapolation",
         registration_fitted=False, frame_matrix=matrix.tolist(),
+        native_frame_origin_m=native_origin.tolist(),
         threshold_fraction=float(threshold_fraction), ROI_source="full measured GRE coverage" if roi_mask is None and threshold_fraction == 0 else "fixed GRE threshold and/or explicit EPI-grid ROI",
         covered_pixels=int(covered.sum()), comparison_pixels=int(mask.sum()),
         excluded_missing_GRE_coverage_pixels=int(np.sum(requested & ~covered)),

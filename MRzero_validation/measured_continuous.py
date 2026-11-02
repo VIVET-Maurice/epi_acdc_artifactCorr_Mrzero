@@ -10,11 +10,17 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import sys
 
 import numpy as np
 import torch
 
 from continuous_reconstruction import ContinuousReconstruction
+
+EXPERIMENT_DIR = Path(__file__).resolve().parent.parent / "Experiment"
+if str(EXPERIMENT_DIR) not in sys.path:
+    sys.path.insert(0, str(EXPERIMENT_DIR))
+from slice_geometry import encoding_origin
 
 
 def _preserve_native(container, names):
@@ -106,11 +112,22 @@ def reconstruct_b0_echoes(b0_raw, sequence_path, *, device="cpu", dtype=torch.fl
             and not np.array_equal(np.argsort(order), info["acquired_phase_rows"])):
         raise ValueError("Calculated B0 phase order disagrees with the validated sequence.")
     trajectory = trajectory[:, order]
+    origin = metadata.get("encoding_origin_m")
+    if "slice_position_mm" in metadata:
+        # The shared geometry helper also rejects an explicit origin that
+        # disagrees with the measured patient-space pose. The Fourier operator
+        # itself remains local: do not rotate or rephase measured k-space here.
+        measured_origin = encoding_origin(metadata)
+        if origin is None:
+            origin = measured_origin
+    if origin is None:
+        origin = (0., 0.)
     coils = np.empty(data.shape, dtype=np.complex128)
     reports = []
     for echo in range(ne):
         acquisition = {"kx_mInv": trajectory[0, :, echo],
-                       "ky_mInv": trajectory[1, :, echo], "FOV_m": info["FOV_m"]}
+                       "ky_mInv": trajectory[1, :, echo], "FOV_m": info["FOV_m"],
+                       "encoding_origin_m": origin}
         operator = ContinuousReconstruction(acquisition, device, dtype)
         coils[echo] = operator.numpy_image(data[echo])
         report = dict(operator.report)

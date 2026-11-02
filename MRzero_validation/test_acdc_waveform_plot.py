@@ -151,6 +151,28 @@ class WaveformPlotTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'omitted initial all-zero'):
                 waveform_plot_data(self.model, commands, **options)
 
+    def test_english_labels_preserve_the_same_physical_current_curves(self):
+        french, _ = plot_acdc_waveform(self.model, self.commands,
+            origin='first_imaging_trigger', trigger_rf_s=.010)
+        english, report = plot_acdc_waveform(self.model, self.commands,
+            origin='first_imaging_trigger', trigger_rf_s=.010, language='en')
+        try:
+            self.assertEqual(report['origin_label'], 'imaging trigger')
+            self.assertEqual(report['language'], 'en')
+            self.assertIn('Complete ACDC waveform', english.axes[0].get_title())
+            self.assertIn('Time from imaging trigger', english.axes[0].get_xlabel())
+            self.assertEqual(english.axes[1].get_ylabel(), 'Output current [A]')
+            self.assertIn('Predicted physical currents', english.axes[0].get_legend_handles_labels()[1])
+            for before_axis, after_axis in zip(french.axes, english.axes):
+                for before, after in zip(before_axis.lines, after_axis.lines):
+                    np.testing.assert_array_equal(before.get_xdata(), after.get_xdata())
+                    np.testing.assert_array_equal(before.get_ydata(), after.get_ydata())
+            with self.assertRaisesRegex(ValueError, 'language'):
+                plot_acdc_waveform(self.model, self.commands, language='de')
+        finally:
+            plt.close(french)
+            plt.close(english)
+
 
 if __name__ == '__main__':
     unittest.main()

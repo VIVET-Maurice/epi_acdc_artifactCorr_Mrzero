@@ -168,40 +168,55 @@ def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
     return data
 
 
-def plot_acdc_waveform(model, currents_A, **options):
-    """Return (figure, JSON-ready report); the notebook decides when to show it."""
+def plot_acdc_waveform(model, currents_A, *, language='fr', **options):
+    """Return (figure, report), with French or English display labels.
+
+    Language changes presentation only. French is the historical default;
+    notebook 07 requests English explicitly.
+    """
+    if language not in ('fr', 'en'):
+        raise ValueError("language must be 'fr' or 'en'.")
+
+    def label(french, english):
+        return english if language == 'en' else french
+
     data = waveform_plot_data(model, currents_A, **options)
     report, csv = data['report'], data['csv']
+    if language == 'en':
+        report['origin_label'] = ('RF centre' if report['origin'] == 'rf' else 'imaging trigger')
+    report['language'] = language
     fig, axes = plt.subplots(2, 1, figsize=(14, 8), layout='constrained')
     # When available, display the actual file commands rather than a second
     # copy of the intended model commands. The physical prediction is labelled.
     if csv is None:
-        command_time, commands, command_label = data['time_ms'], data['commanded_A'], 'Commandes DAC du modèle'
+        command_time, commands, command_label = data['time_ms'], data['commanded_A'], label('Commandes DAC du modèle', 'Model DAC commands')
     else:
-        command_time, commands, command_label = csv['time_ms'], csv['commanded_A'], 'Commandes lues dans le CSV'
+        command_time, commands, command_label = csv['time_ms'], csv['commanded_A'], label('Commandes lues dans le CSV', 'Commands read from CSV')
     for row, values in enumerate(commands):
         axes[0].step(command_time, values, where='post', color='gray', alpha=.22,
                      linewidth=.65, label=command_label if row == 0 else None)
     for row, values in enumerate(data['actual_A']):
         axes[0].plot(data['time_ms'], values, alpha=.65, linewidth=.8,
-                     label='Courants physiques prédits' if row == 0 else None)
+                     label=label('Courants physiques prédits', 'Predicted physical currents') if row == 0 else None)
     axes[0].axvline(report['final_zero_from_origin_ms'], color='black', linestyle='--',
-                    label='Retour commandé à zéro')
-    time_label = f"Temps depuis {report['origin_label']} [ms]"
+                    label=label('Retour commandé à zéro', 'Commanded return to zero'))
+    time_label = label(f"Temps depuis {report['origin_label']} [ms]", f"Time from {report['origin_label']} [ms]")
     if report['pre_origin_samples_retained']:
-        time_label += ' — temps négatifs : avant le trigger'
-    axes[0].set(xlabel=time_label, ylabel='Courant de sortie [A]',
-                title='Forme d’onde ACDC complète — prédiction et commandes')
+        time_label += label(' — temps négatifs : avant le trigger', ' — negative times precede the trigger')
+    axes[0].set(xlabel=time_label, ylabel=label('Courant de sortie [A]', 'Output current [A]'),
+                title=label('Forme d’onde ACDC complète — prédiction et commandes', 'Complete ACDC waveform — prediction and commands'))
     axes[0].legend()
     axes[1].step(data['zoom_time_us'], data['zoom_commanded_A'], where='post',
-                 color='gray', linestyle='--', label='Commande DAC du modèle')
+                 color='gray', linestyle='--', label=label('Commande DAC du modèle', 'Model DAC command'))
     if csv is not None:
         axes[1].step(csv['zoom_time_us'], csv['commanded_A'][report['selected_physical_output'] - 1],
-                     where='post', color='black', alpha=.8, label='Commande CSV')
-    axes[1].plot(data['zoom_time_us'], data['zoom_actual_A'], label='Courant physique prédit')
-    axes[1].set(xlabel='Temps depuis le changement sélectionné [µs]', ylabel='Courant de sortie [A]',
+                     where='post', color='black', alpha=.8, label=label('Commande CSV', 'CSV command'))
+    axes[1].plot(data['zoom_time_us'], data['zoom_actual_A'], label=label('Courant physique prédit', 'Predicted physical current'))
+    axes[1].set(xlabel=label('Temps depuis le changement sélectionné [µs]', 'Time from the selected transition [µs]'),
+        ylabel=label('Courant de sortie [A]', 'Output current [A]'),
         xlim=(float(data['zoom_time_us'].min()), float(data['zoom_time_us'].max())),
-        title=f"Sortie {report['selected_physical_output']} : changement à {report['transition_time_from_origin_ms']:.3f} ms depuis {report['origin_label']} ; τ={report['selected_tau_us']:.2f} µs")
+        title=label(f"Sortie {report['selected_physical_output']} : changement à {report['transition_time_from_origin_ms']:.3f} ms depuis {report['origin_label']} ; τ={report['selected_tau_us']:.2f} µs",
+                    f"Output {report['selected_physical_output']}: transition at {report['transition_time_from_origin_ms']:.3f} ms from {report['origin_label']}; τ={report['selected_tau_us']:.2f} µs"))
     axes[1].legend()
     return fig, report
 

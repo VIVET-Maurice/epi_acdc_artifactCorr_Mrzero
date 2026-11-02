@@ -97,6 +97,26 @@ class ImageHistoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             history.record(dict(iteration=0, image=np.zeros((2, 3))))
 
+    def test_english_viewer_translates_controls_without_changing_archived_images(self):
+        reference = np.arange(6).reshape(2, 3)
+        french = OptimizationImageHistory(reference, reference, every=2)
+        english = OptimizationImageHistory(reference, reference, every=2, language="en")
+        self.assertIn("No archived image", english.html())
+        for history in (french, english):
+            history.record(dict(iteration=0, image=reference))
+            history.record(dict(iteration=2, image=reference + 1))
+        for key, value in french.arrays().items():
+            np.testing.assert_array_equal(value, english.arrays()[key])
+        html = english.html(standalone=True)
+        for text in ('lang="en"', "Simulated scan evolution", "Iteration 2",
+                     "Archived iterations: 0, 2", "Shared scale: 0 to", "Image origin at the top.",
+                     'aria-label="Archived image"', 'alt="Reference"'):
+            self.assertIn(text, html)
+        for text in ("Itération", "Référence", "archivée", "Échelle", "Scan simulé"):
+            self.assertNotIn(text, html)
+        with self.assertRaisesRegex(ValueError, "language"):
+            OptimizationImageHistory(reference, reference, language="de")
+
 
 if __name__ == "__main__":
     unittest.main()

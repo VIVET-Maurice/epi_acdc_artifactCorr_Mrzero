@@ -38,6 +38,41 @@ def independent_penalty(experiment, calibration, commands, centers, scale):
 
 
 class FieldGuidanceTests(unittest.TestCase):
+    def test_unequal_spiral_turns_match_event_ode_with_response_and_disabled_channels(self):
+        from experiment_multiecho import MultiEchoVoxelACDCModel
+        from test_spiral_model import spiral_fixture
+
+        rng = np.random.default_rng(752)
+        for enabled, tau in ((True, 350e-6),
+                             (True, np.linspace(100e-6, 900e-6, 32))):
+            with self.subTest(enabled=enabled, channel_specific=np.ndim(tau) > 0):
+                experiment, calibration = spiral_fixture()
+                experiment["current_response"] = {"enabled": enabled, "tau_s": tau}
+                limits = np.full(32, 3.)
+                limits[8] = 0.
+                model = MultiEchoVoxelACDCModel(experiment, calibration, limits,
+                    profile="cpu", precision="float64", sample_chunk=7)
+                guide = FieldGuidance(model, scale_Hz=75.)
+                commands = model.project_currents(rng.normal(size=(32, 3)) * .12, 30., 500.)
+                value, derivative, rms = guide.value_gradient(commands)
+                expected = independent_penalty(experiment, calibration, commands,
+                    guide.state_center_times_s, 75.)
+                np.testing.assert_allclose([float(value), float(rms)], expected, rtol=3e-13)
+                np.testing.assert_array_equal(commands[8], 0.)
+                counts = np.bincount(model.line_index.ravel())[1:]
+                self.assertGreater(np.ptp(counts), 0)
+                self.assertEqual(guide.report["command_state_unit"], "spiral turn")
+                self.assertEqual(guide.report["sequence_kind"], "spiral")
+                direction = rng.normal(size=commands.shape)
+                direction[8] = 0.
+                direction /= np.linalg.norm(direction)
+                step = 1e-5
+                difference = (guide.value_gradient(commands + step * direction, gradient=False)[0]
+                              - guide.value_gradient(commands - step * direction, gradient=False)[0]) / (2 * step)
+                np.testing.assert_allclose(float((derivative * model.tensor(direction)).sum()),
+                    float(difference), rtol=3e-7, atol=2e-10)
+                json.dumps(guide.report, allow_nan=False)
+
     def test_matches_independent_response_and_preserves_chronological_order(self):
         rng = np.random.default_rng(749)
         for enabled, tau in ((False, None), (True, 350e-6), (True, np.linspace(100e-6, 900e-6, 32))):

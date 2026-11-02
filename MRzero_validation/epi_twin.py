@@ -25,6 +25,12 @@ class NativeEPITwin:
     ``amplitude_reference_time_s`` anchors that amplitude after each RF; MRzero
     receives ``PD=amplitude*exp(anchor*rate)`` and applies its native decay.
     The caller supplies any pixel-area/volume-fraction weights in amplitude.
+    XY inputs are coordinates along the native readout/phase plane, including
+    its projected receiver origin; they are not patient sagittal/coronal axes.
+    Patient slice rotation does not rotate the nominal Pulseq k coordinates.
+    Optional acquisition
+    ``encoding_origin_m`` identifies the receiver center; it is subtracted
+    only for Fourier encoding, without changing spatial B0 registration.
 
     Optional complex ``receive_weights[receiver, object_row, object_column]``
     must have unit RSS norm at active points. This distributes an effective
@@ -78,25 +84,38 @@ class NativeEPITwin:
             self._pd = np.asarray(amplitude[self.support], dtype=np.float64) * np.exp(anchor * self._rate)
         if not np.isfinite(self._pd).all() or np.any(self._pd > np.finfo(np.float32).max):
             raise ValueError("Amplitude extrapolation to RF overflows native float32 MRzero.")
-        self._positions = np.column_stack((arrays["X_m"][self.support], arrays["Y_m"][self.support],
+        origin = acquisition.get("encoding_origin_m", (0., 0.))
+        if np.iscomplexobj(origin):
+            raise ValueError("encoding_origin_m must contain two finite real coordinates.")
+        origin = np.asarray(origin, dtype=np.float64)
+        if origin.shape != (2,) or not np.isfinite(origin).all():
+            raise ValueError("encoding_origin_m must contain two finite real coordinates.")
+        self.encoding_origin_m = origin.copy()
+        # The scanner has already demodulated the chosen receiver origin.
+        # Keep native-plane input coordinates for registration, but encode
+        # local positions so a slice translation cannot become a false phase
+        # ramp. Obliquity belongs in patient-space calibration sampling, not
+        # in the nominal readout/phase k coordinates of this baseline twin.
+        self._positions = np.column_stack((arrays["X_m"][self.support] - origin[0],
+                                          arrays["Y_m"][self.support] - origin[1],
                                           np.zeros(self.support.sum()))).astype(np.float32)
         self._b0 = arrays["B0_Hz"][self.support].astype(np.float32)
         self._t2 = np.divide(1., self._rate, out=np.full_like(self._rate, np.inf), where=self._rate > 0)
         if np.any(self._t2 < 1e-6):
             raise ValueError("Native MRzero requires relaxation times >= 1 microsecond.")
-        self.image_shape = np.asarray(acquisition["kx_mInv"]).shape
-        if len(self.image_shape) != 2 or min(self.image_shape) < 1:
+        self.sampling_shape = np.asarray(acquisition["kx_mInv"]).shape
+        if len(self.sampling_shape) != 2 or min(self.sampling_shape) < 1:
             raise ValueError("Acquisition needs nonempty two-dimensional ADC arrays.")
-        self.nsamples = int(np.prod(self.image_shape))
+        self.nsamples = int(np.prod(self.sampling_shape))
         self._acquisition = {}
         for name in ("kx_mInv", "ky_mInv", "time_s"):
             value = np.asarray(acquisition[name])
-            if value.shape != self.image_shape or np.iscomplexobj(value) or not np.isfinite(value).all():
+            if value.shape != self.sampling_shape or np.iscomplexobj(value) or not np.isfinite(value).all():
                 raise ValueError(f"{name} must be a finite real acquisition-grid array.")
             self._acquisition[name] = np.asarray(value, dtype=np.float64).reshape(-1)
         for name in ("rf_time_s", "phase_offset_rad"):
-            value = np.asarray(acquisition.get(name, np.zeros(self.image_shape)))
-            if value.shape != self.image_shape or np.iscomplexobj(value) or not np.isfinite(value).all():
+            value = np.asarray(acquisition.get(name, np.zeros(self.sampling_shape)))
+            if value.shape != self.sampling_shape or np.iscomplexobj(value) or not np.isfinite(value).all():
                 raise ValueError(f"{name} must be a finite real acquisition-grid array.")
             self._acquisition[name] = np.asarray(value, dtype=np.float64).reshape(-1)
         self._elapsed = self._acquisition["time_s"] - self._acquisition["rf_time_s"]
@@ -117,6 +136,7 @@ class NativeEPITwin:
         self.nreceivers = self._receive.shape[0]
         reconstruction_dtype = torch.float32 if self.device.type == "cuda" else torch.float64
         self.reconstruction = ContinuousReconstruction(acquisition, self.device, reconstruction_dtype)
+        self.image_shape = self.reconstruction.image_size
 
     def _phantom(self, b0_enabled):
         phantom = self._mr0.CustomVoxelPhantom(
@@ -203,7 +223,7 @@ class NativeEPITwin:
                 for name, error in diagnostics.items():
                     maxima[name] = max(maxima[name], error)
                 blocks += 1
-        kdata = signal.reshape((self.nreceivers,) + self.image_shape)
+        kdata = signal.reshape((self.nreceivers,) + self.sampling_shape)
         coil_images = self.reconstruction.image(kdata)
         image = torch.sqrt(torch.sum(torch.abs(coil_images)**2, dim=0))
         if self.device.type == "cuda":
@@ -213,6 +233,7 @@ class NativeEPITwin:
             "native_precision": "float32", "device": str(self.device), "B0_enabled": bool(b0_enabled),
             "object_shape": list(self.object_shape), "active_points": int(self.support.sum()),
             "image_shape": list(self.image_shape), "receivers": int(self.nreceivers),
+            "sampling_shape": list(self.sampling_shape),
             "sample_chunk": self.sample_chunk, "native_blocks_simulated": blocks,
             "native_resummation_relative_error": maxima["relative_error"],
             "native_resummation_mass_relative_error": maxima["mass_relative_error"],
@@ -227,6 +248,8 @@ class NativeEPITwin:
             "receiver_normalization": "unit RSS norm at each active point",
             "RF_model": "independent ideal 90-degree excitation per RF history",
             "native_phase_convention": "exp(-2*pi*i*(k*r+B0*t))*exp(+i ADCphase), real initial Mxy",
+            "encoding_origin_m": self.encoding_origin_m.tolist(),
+            "position_convention": "r = physical XY minus receiver encoding_origin_m",
             "reconstruction": self.reconstruction.report, "elapsed_s": perf_counter() - started,
         }
         return {"image": image.cpu().numpy(), "coil_images": coil_images.cpu().numpy(),

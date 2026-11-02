@@ -80,6 +80,30 @@ class ContinuousReconstructionTests(unittest.TestCase):
             np.testing.assert_allclose(model.numpy_image(data), independent_sum(data, acq),
                                        rtol=3e-14, atol=3e-14)
 
+    def test_translated_receiver_origin_preserves_complex_data_and_adjoint(self):
+        # Scanner reception has already centered the raw data on the selected
+        # slice. A physical translation must therefore change coordinates,
+        # without introducing another k-dependent phase or an image shift.
+        origin = np.asarray([.017, -.029])
+        for kind in ("cartesian", "row", "general"):
+            with self.subTest(kind=kind):
+                acq = acquisition(offset=(.7, -.4), kind=kind)
+                centered = self.model(acq, sample_chunk=7)
+                acq["encoding_origin_m"] = origin
+                shifted = self.model(acq, sample_chunk=7)
+                samples = self.complex_values((2,) + shifted.image_size)
+                target = self.complex_values(samples.shape)
+                np.testing.assert_allclose(shifted.X_m, centered.X_m + origin[0], atol=0)
+                np.testing.assert_allclose(shifted.Y_m, centered.Y_m + origin[1], atol=0)
+                np.testing.assert_allclose(shifted.numpy_image(samples),
+                                           independent_sum(samples, acq), atol=3e-14)
+                torch.testing.assert_close(shifted.adjoint(target), centered.adjoint(target),
+                                           rtol=0, atol=0)
+                left = torch.vdot(shifted.image(samples).ravel(), torch.as_tensor(target).ravel())
+                right = torch.vdot(torch.as_tensor(samples).ravel(), shifted.adjoint(target).ravel())
+                torch.testing.assert_close(left, right, rtol=2e-13, atol=2e-13)
+                self.assertEqual(shifted.report["encoding_origin_m"], origin.tolist())
+
     def test_hermitian_inner_product_for_all_branches_and_batches(self):
         for kind in ["cartesian", "row", "general"]:
             with self.subTest(kind=kind):
@@ -143,6 +167,11 @@ class ContinuousReconstructionTests(unittest.TestCase):
             self.model(acq)
         with self.assertRaisesRegex(ValueError, "trailing image axes"):
             self.model(acquisition()).image(np.zeros((6, 5)))
+        for bad in ([.01], [.01, np.nan], [.01, 1j], [[.01, .02]]):
+            acq = acquisition()
+            acq["encoding_origin_m"] = bad
+            with self.subTest(origin=bad), self.assertRaisesRegex(ValueError, "encoding_origin_m"):
+                self.model(acq)
 
 
 if __name__ == "__main__":

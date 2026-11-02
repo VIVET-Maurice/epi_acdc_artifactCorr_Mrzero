@@ -212,14 +212,38 @@ class B0TwixTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one slice"):
             self.read()
 
-    def test_offset_preserved_and_unsupported_rotation_rejected(self):
+    def test_offset_preserved_and_oblique_rotation_supported(self):
         geometry = self.scans[0]["mdb"][0].mdh.SliceData
         geometry.SlicePos.Sag, geometry.SlicePos.Cor = 12, -7
         result = self.read()
         self.assertAlmostEqual(result["X_m"][6, 8], -.007)
         self.assertAlmostEqual(result["Y_m"][6, 8], -.012)
-        geometry.Quaternion = [1, 0, 0, 0]
-        with self.assertRaisesRegex(ValueError, "axial"):
+        np.testing.assert_allclose(result["metadata"]["encoding_origin_m"], [-.007, -.012])
+        np.testing.assert_allclose(result["b0Hz"], self.field, atol=1e-10)
+        with patch("twixtools.read_twix", return_value=self.scans):
+            echoes = read_b0_coil_images(self.path)
+        np.testing.assert_allclose(echoes["metadata"]["encoding_origin_m"], [-.007, -.012])
+        np.testing.assert_allclose(echoes["coil_images"], coil_images(self.field), atol=1e-12)
+        angle = np.deg2rad(.435)
+        geometry.Quaternion = np.asarray([np.cos(angle/2), np.sin(angle/2),
+                                          -np.sin(angle/2), np.cos(angle/2)]) / np.sqrt(2)
+        geometry.SlicePos.Tra = 40
+        result = self.read()
+        origin = np.asarray([-7*np.cos(angle) + 40*np.sin(angle), -12]) * .001
+        np.testing.assert_allclose(result["metadata"]["encoding_origin_m"], origin, atol=1e-14)
+        np.testing.assert_allclose(result["X_m"][0], (np.arange(16)-8)*.2/16+origin[0], atol=1e-14)
+        np.testing.assert_allclose(result["Y_m"][:, 0], (np.arange(12)-6)*.16/12+origin[1], atol=1e-14)
+        np.testing.assert_allclose(result["b0Hz"], self.field, atol=1e-10)
+
+    def test_nonunit_quaternion_and_geometry_changes_are_rejected(self):
+        geometry = self.scans[0]["mdb"][0].mdh.SliceData
+        geometry.Quaternion = [1, 0, 0, 1]
+        with self.assertRaisesRegex(ValueError, "quaternion"):
+            self.read()
+        geometry.Quaternion = [2**-.5, 0, 0, 2**-.5]
+        changed = SimpleNamespace(SlicePos=geometry.SlicePos, Quaternion=[1, 0, 0, 0])
+        self.scans[0]["mdb"][-1].mdh = SimpleNamespace(SliceData=changed, CenterCol=8, CenterLin=6)
+        with self.assertRaisesRegex(ValueError, "changes within"):
             self.read()
 
     def test_bipolar_echoes_rejected(self):

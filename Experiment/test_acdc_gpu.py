@@ -401,6 +401,9 @@ class DeviceSelectionTests(unittest.TestCase):
             "architectures": patch.object(torch.cuda, "get_arch_list", return_value=["sm_70", "sm_75"]),
             "probe": patch.object(torch, "ones", return_value=probe),
             "synchronize": patch.object(torch.cuda, "synchronize"),
+            "free_memory": patch.object(torch.cuda, "mem_get_info", return_value=(1024**2, 16 * 1024**3)),
+            "allocated_memory": patch.object(torch.cuda, "memory_allocated", return_value=12 * 1024**3),
+            "reserved_memory": patch.object(torch.cuda, "memory_reserved", return_value=14 * 1024**3),
         }
         self.mocks = {}
         for name, patcher in patches.items():
@@ -471,6 +474,49 @@ class DeviceSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Test GPU.*sm_120") as raised:
             select_device("auto", require_cuda=True)
         self.assertIs(raised.exception.__cause__, failure)
+
+    def test_required_cuda_reports_memory_exhaustion_without_build_install_advice(self):
+        for failure in (torch.OutOfMemoryError("Allocation failed"),
+                        RuntimeError("CUDA error: out of memory")):
+            self.mocks["probe"].side_effect = failure
+            with self.subTest(failure=type(failure).__name__), self.assertRaisesRegex(
+                    RuntimeError, "CUDA out of memory during the small startup test") as raised:
+                select_device("auto", require_cuda=True)
+            self.assertIs(raised.exception.__cause__, failure)
+            message = str(raised.exception)
+            self.assertIn("GPU free: 0.001 GiB", message)
+            self.assertIn("this process allocated: 12.000 GiB", message)
+            self.assertIn("this process reserved: 14.000 GiB", message)
+            self.assertIn("Restart the notebook kernel", message)
+            self.assertIn("nvidia-smi", message)
+            self.assertIn("SAMPLE_CHUNK apply later", message)
+            self.assertNotIn("Install a PyTorch", message)
+
+    def test_auto_memory_fallback_keeps_memory_counters_and_failure_category(self):
+        self.mocks["probe"].side_effect = RuntimeError("CUDA error: out of memory")
+        with self.assertWarnsRegex(RuntimeWarning, "CUDA out of memory"):
+            device, dtype, info = select_device()
+        self.assertEqual(device.type, "cpu")
+        self.assertEqual(dtype, torch.float64)
+        self.assertEqual(info["cuda_failure_category"], "out_of_memory")
+        self.assertEqual(info["cuda_memory_at_failure"]["allocated_bytes"], 12 * 1024**3)
+
+    def test_failed_memory_queries_do_not_hide_the_original_cuda_error(self):
+        failure = RuntimeError("CUDA error: out of memory")
+        self.mocks["probe"].side_effect = failure
+        for key in ("free_memory", "allocated_memory", "reserved_memory"):
+            self.mocks[key].side_effect = RuntimeError("Memory query unavailable")
+        with self.assertRaisesRegex(RuntimeError, "GPU memory counters unavailable") as raised:
+            select_device("auto", require_cuda=True)
+        self.assertIs(raised.exception.__cause__, failure)
+
+    def test_unknown_execution_failure_does_not_claim_kernel_incompatibility(self):
+        failure = RuntimeError("CUDA error: an illegal memory access was encountered")
+        self.mocks["synchronize"].side_effect = failure
+        with self.assertRaisesRegex(RuntimeError, "previous asynchronous CUDA failure") as raised:
+            select_device("auto", require_cuda=True)
+        self.assertIs(raised.exception.__cause__, failure)
+        self.assertNotIn("Install a PyTorch", str(raised.exception))
 
     def test_required_cuda_rejects_missing_gpu_and_explicit_cpu(self):
         self.mocks["available"].return_value = False

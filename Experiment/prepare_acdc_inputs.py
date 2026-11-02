@@ -19,6 +19,7 @@ from scipy.io import loadmat, savemat
 from prepare_acdc_calibration import sha256
 from read_acdc_sequence import read_sequence
 from resample_acdc_maps import resample_to_grid
+from slice_geometry import encoding_origin, normalized_quaternion, slice_basis, slice_center
 
 
 DEFAULT_FILES = {"gre": "gre_reference.dat", "b0": "b0_map.dat",
@@ -66,8 +67,10 @@ def read_gre(path: Path, reference_acquisition: dict | None = None,
     """Read one reference magnitude image, reconstructing mono-echo GRE Twix.
 
     A raw ``.dat`` reference requires its own parsed GRE Pulseq acquisition.
-    Native Twix image axes are ``(phase, readout)``. The supported axial frame
-    matches the existing simulator: readout is patient +y, phase is patient -x.
+    Native Twix image axes are ``(phase, readout)``. ``X_m``/``Y_m`` are the
+    coordinates along the measured slice's readout and phase axes, including
+    the projected slice translation. The physical 3D grid is retained in
+    ``position_mm`` and ``orientation``; the Fourier origin is the slice centre.
     The default return remains one dictionary. For notebook figures, request
     ``(reference, diagnostics)`` with ``return_intermediates=True``.
     """
@@ -82,15 +85,10 @@ def read_gre(path: Path, reference_acquisition: dict | None = None,
         magnitude, metadata = reconstructed[:2]
         if metadata["navigator_count"] != 0:
             raise ValueError("The reference Twix must be mono-echo GRE/FLASH without EPI navigators.")
-        expected_quaternion = np.asarray([1, 0, 0, 1], float) / np.sqrt(2)
-        if not np.isclose(abs(np.dot(metadata["slice_quaternion_wxyz"], expected_quaternion)),
-                          1, atol=1e-8):
-            raise ValueError("The reference Twix adapter supports the existing axial orientation only; "
-                             "export registered NPZ/MAT coordinates for another orientation.")
-        center = np.asarray(metadata["slice_position_mm"], float)
-        if np.any(np.abs(center[:2]) > 1e-3):
-            raise ValueError("The reference Twix adapter requires a centered in-plane origin; "
-                             "export registered NPZ/MAT coordinates for an offset acquisition.")
+        center = slice_center(metadata)
+        basis = slice_basis(metadata)
+        origin = encoding_origin(metadata)
+        metadata["encoding_origin_m"] = origin.tolist()
         fov = np.asarray(metadata["FOV_m"], float)
         thickness = float(metadata["slice_thickness_mm"])
         if (fov.shape != (2,) or not np.isfinite(fov).all() or np.any(fov <= 0)
@@ -100,13 +98,14 @@ def read_gre(path: Path, reference_acquisition: dict | None = None,
         dx_mm, dy_mm = fov * 1000 / np.asarray([nx, ny])
         # FFT zero is at n//2, not (n-1)/2. SlicePos is the slice center,
         # whereas position_mm below is the physical center of pixel [0, 0].
-        x = (np.arange(nx) - nx // 2) * dx_mm * 1e-3 + center[1] * 1e-3
-        y = (np.arange(ny) - ny // 2) * dy_mm * 1e-3 - center[0] * 1e-3
+        x = (np.arange(nx) - nx // 2) * dx_mm * 1e-3 + origin[0]
+        y = (np.arange(ny) - ny // 2) * dy_mm * 1e-3 + origin[1]
         X, Y = np.meshgrid(x, y)
         result = {"magnitude": magnitude, "X_m": X, "Y_m": Y,
-                  "position_mm": center + [ny // 2 * dy_mm, -nx // 2 * dx_mm, 0],
+                  "encoding_origin_m": np.asarray(metadata["encoding_origin_m"], float),
+                  "position_mm": center - nx // 2 * dx_mm * basis[:, 0] - ny // 2 * dy_mm * basis[:, 1],
                   "spacing_mm": np.asarray([dy_mm, dx_mm]),
-                  "orientation": np.asarray([0, 1, 0, -1, 0, 0], float),
+                  "orientation": basis[:, :2].T.reshape(6),
                   "slice_thickness_mm": thickness,
                   "TE_s": metadata["TE_s"], "TR_s": metadata["TR_s"],
                   "flip_deg": metadata["header_flip_deg"], "twix_metadata": metadata}
@@ -328,14 +327,13 @@ def read_scan(path: Path, acquisition: dict | None = None,
         return np.asarray([entry.SlicePos.Sag, entry.SlicePos.Cor, entry.SlicePos.Tra], float)
 
     position = slice_position(slice_data[0])
-    quaternion = np.asarray(list(slice_data[0].Quaternion), float)
-    if (not np.isfinite(position).all() or not np.isfinite(quaternion).all()
-            or not np.isclose(np.linalg.norm(quaternion), 1, atol=1e-6)):
+    quaternion = normalized_quaternion(list(slice_data[0].Quaternion))
+    if not np.isfinite(position).all():
         raise ValueError("Twix slice position/quaternion is invalid.")
-    quaternion /= np.linalg.norm(quaternion)
     for entry in slice_data[1:]:
         if (not np.allclose(slice_position(entry), position, rtol=0, atol=1e-3)
-                or not np.isclose(abs(np.dot(list(entry.Quaternion), quaternion)), 1, atol=1e-6)):
+                or not np.allclose(slice_basis({"slice_quaternion_wxyz": list(entry.Quaternion)}),
+                                   slice_basis({"slice_quaternion_wxyz": quaternion}), rtol=0, atol=1e-6)):
             raise ValueError("Twix slice geometry changes within this acquisition.")
     metadata = {"TE_s": float(header["alTE"][0]) * 1e-6,
                 "TR_s": float(header["alTR"][0]) * 1e-6,
@@ -370,8 +368,16 @@ def check_physical_geometry(gre: dict, scan_metadata: dict, acquisition: dict,
                             *, dicom_input: bool) -> None:
     """Reject observable geometry disagreements even when registration was confirmed."""
     fov = np.asarray(acquisition["FOV_m"], float)
-    if (np.any(np.abs(X[support]) > fov[0] / 2 + 1e-6)
-            or np.any(np.abs(Y[support]) > fov[1] / 2 + 1e-6)):
+    metadata_origin = encoding_origin(scan_metadata) if scan_metadata else None
+    reference_origin = gre.get("encoding_origin_m", [0., 0.])
+    origin = np.asarray(acquisition.get("encoding_origin_m",
+                        metadata_origin if metadata_origin is not None else reference_origin), float)
+    if origin.shape != (2,) or not np.isfinite(origin).all():
+        raise ValueError("The acquisition encoding_origin_m must contain two finite native XY coordinates.")
+    if metadata_origin is not None and not np.allclose(origin, metadata_origin, rtol=0, atol=1e-6):
+        raise ValueError("The acquisition encoding origin disagrees with the measured Twix slice centre.")
+    if (np.any(np.abs(X[support] - origin[0]) > fov[0] / 2 + 1e-6)
+            or np.any(np.abs(Y[support] - origin[1]) > fov[1] / 2 + 1e-6)):
         raise ValueError("GRE ROI extends outside the scan field of view; check coordinates/registration "
                          "or explicitly select an ROI inside the acquired FOV.")
     if not scan_metadata:
@@ -384,24 +390,18 @@ def check_physical_geometry(gre: dict, scan_metadata: dict, acquisition: dict,
         scan_position = np.asarray(scan_metadata["slice_position_mm"], float)
         if not np.allclose(reference_position, scan_position, rtol=0, atol=1e-3):
             raise ValueError("Reference GRE Twix and scan Twix describe different slice planes/origins.")
-        if not np.isclose(abs(np.dot(reference_metadata["slice_quaternion_wxyz"],
-                                     scan_metadata["slice_quaternion_wxyz"])), 1, atol=1e-8):
+        if not np.allclose(slice_basis(reference_metadata), slice_basis(scan_metadata), rtol=0, atol=1e-6):
             raise ValueError("Reference GRE Twix and scan Twix describe different readout/phase orientations.")
         return
     if not dicom_input:
         return  # The explicit NPZ coordinates already refer to the sequence axes.
-    # This DICOM adapter deliberately supports the exact axial frame of the
-    # existing notebook. A different Twix rotation/offset needs a registered
-    # coordinate export; a boolean cannot override a contradictory header.
-    expected_quaternion = np.asarray([1, 0, 0, 1], float) / np.sqrt(2)
-    actual = np.asarray(scan_metadata["slice_quaternion_wxyz"], float)
-    if not np.isclose(abs(np.dot(actual, expected_quaternion)), 1, atol=1e-8):
+    # The DICOM grid retains absolute patient coordinates. An axial translated
+    # Twix can therefore use it directly; another rotation still needs an
+    # explicitly registered coordinate export.
+    if not np.allclose(slice_basis(scan_metadata), slice_basis({}), rtol=0, atol=1e-6):
         raise ValueError("Twix readout/phase orientation differs from the supported DICOM adapter; "
                          "export registered GRE coordinates as NPZ/MAT.")
     position = np.asarray(scan_metadata["slice_position_mm"], float)
-    if np.any(np.abs(position[:2]) > 1e-3):
-        raise ValueError("The DICOM adapter requires a centered Twix in-plane origin; "
-                         "export registered GRE coordinates as NPZ/MAT for an offset acquisition.")
     if abs(position[2] - float(gre["position_mm"][2])) > 1e-3:
         raise ValueError("GRE DICOM and Twix describe different slice planes.")
 
@@ -547,17 +547,26 @@ def prepare_inputs(input_dir: Path, output_dir: Path, config: dict) -> dict:
         raise ValueError("Scan image must be a finite, nonnegative, nonzero magnitude image.")
     check_physical_geometry(gre, scan_metadata, acquisition, support, X, Y,
                             dicom_input=paths["gre"].suffix.lower() == ".dcm")
+    origin = encoding_origin(scan_metadata) if scan_metadata else gre.get("encoding_origin_m", [0., 0.])
+    acquisition["encoding_origin_m"] = np.asarray(origin, float)
     if b0_metadata is not None:
-        # The B0 reader exports physical axial X/Y coordinates. A 2D
+        # The B0 reader exports coordinates in its measured slice frame. A 2D
         # resampling must never silently match maps from a different plane.
         b0_position = np.asarray(b0_metadata["slice_position_mm"], float)
-        if "position_mm" in gre and abs(b0_position[2] - gre["position_mm"][2]) > 1e-3:
+        if ("position_mm" in gre
+                and abs(np.dot(b0_position - np.asarray(gre["position_mm"]),
+                               slice_basis(b0_metadata)[:, 2])) > 1e-3):
             raise ValueError("B0 Twix and reference GRE describe different slice planes.")
+        if (gre.get("twix_metadata")
+                and not np.allclose(slice_basis(b0_metadata), slice_basis(gre["twix_metadata"]),
+                                    rtol=0, atol=1e-6)):
+            raise ValueError("B0 Twix and reference GRE describe different slice orientations.")
+        if paths["gre"].suffix.lower() == ".dcm" and not np.allclose(
+                slice_basis(b0_metadata), slice_basis({}), rtol=0, atol=1e-6):
+            raise ValueError("B0 Twix orientation differs from the supported DICOM adapter.")
         if scan_metadata:
-            b0_normal = np.asarray(b0_metadata["slice_quaternion_wxyz"], float)
-            scan_normal = np.asarray(scan_metadata["slice_quaternion_wxyz"], float)
-            if (abs(b0_position[2] - scan_metadata["slice_position_mm"][2]) > 1e-3
-                    or not np.isclose(abs(np.dot(b0_normal, scan_normal)), 1, atol=1e-8)):
+            if (abs(np.dot(b0_position - slice_center(scan_metadata), slice_basis(scan_metadata)[:, 2])) > 1e-3
+                    or not np.allclose(slice_basis(b0_metadata), slice_basis(scan_metadata), rtol=0, atol=1e-6)):
                 raise ValueError("B0 Twix and scan Twix describe different slice planes/orientations.")
     for key in ("TE_s", "TR_s", "dwell_s"):
         tolerance = 1e-9 if key == "dwell_s" else 1e-6
@@ -576,7 +585,8 @@ def prepare_inputs(input_dir: Path, output_dir: Path, config: dict) -> dict:
     # Its absolute scale cancels in the normalized objective; retain it for audit.
     scale = float(magnitude[support].max())
     amplitude = np.where(support, magnitude / scale, 0)
-    geometry = {"X_m": X, "Y_m": Y, "axes": "X=sequence readout; Y=sequence phase; metres"}
+    geometry = {"X_m": X, "Y_m": Y, "axes": "X=sequence readout; Y=sequence phase; metres",
+                "encoding_origin_m": acquisition["encoding_origin_m"]}
     for key in ("position_mm", "spacing_mm", "orientation", "slice_thickness_mm"):
         if key in gre:
             geometry[key] = gre[key]

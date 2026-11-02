@@ -102,6 +102,14 @@ def rotate_acquisition_k(acquisition, angle_deg=0., *,
     result = deepcopy(acquisition)
     result['kx_mInv'], result['ky_mInv'] = rotate_points(
         kx, ky, angle_deg, mirror_x=mirror_x, mirror_y=mirror_y, matrix=matrix)
+    if 'encoding_origin_m' in acquisition:
+        origin = np.asarray(acquisition['encoding_origin_m'])
+        if (origin.shape != (2,) or np.iscomplexobj(origin)
+                or not np.isfinite(origin).all()):
+            raise ValueError("encoding_origin_m must contain two finite real coordinates.")
+        ox, oy = rotate_points(origin[0], origin[1], angle_deg,
+                              mirror_x=mirror_x, mirror_y=mirror_y, matrix=matrix)
+        result['encoding_origin_m'] = np.asarray([ox, oy], dtype=float)
     return result
 
 
@@ -140,6 +148,11 @@ class FrameReconstruction:
     This is essential for angles other than right-angle array permutations:
     rotating k and spins while reconstructing on the original XY grid would
     rotate the simulated image relative to the comparison target.
+
+    Optional ``native_frame_origin_m`` records an absolute source-image center
+    when the model coordinates are local. It is retained in the native frame;
+    a source sample is obtained as ``frame_matrix.T @ output + native_origin``.
+    This is registration metadata and does not change the Fourier kernels.
     """
 
     def __init__(self, acquisition, device, dtype, frame_angle_deg=0., sample_chunk=256,
@@ -155,6 +168,17 @@ class FrameReconstruction:
         self.image_size, self.nsamples = self.base.image_size, self.base.nsamples
         self.X_m, self.Y_m = rotate_points(self.base.X_m, self.base.Y_m,
                                           matrix=self.frame_matrix)
+        self.encoding_origin_m = self.frame_matrix @ self.base.encoding_origin_m
+        # Echo-expanded models may use local coordinates while measured GRE
+        # and B0 grids retain the scanner's absolute slice center. This origin
+        # belongs to the native measured frame, so it must never rotate with k.
+        native_origin = acquisition.get('native_frame_origin_m', (0., 0.))
+        if np.iscomplexobj(native_origin):
+            raise ValueError("native_frame_origin_m must contain two finite real coordinates.")
+        native_origin = np.asarray(native_origin, dtype=float)
+        if native_origin.shape != (2,) or not np.isfinite(native_origin).all():
+            raise ValueError("native_frame_origin_m must contain two finite real coordinates.")
+        self.native_frame_origin_m = native_origin.copy()
         self.report = dict(self.base.report)
         self.report.update(
             operator="normalized Fourier adjoint on the jointly rotated k/output grid",
@@ -162,6 +186,8 @@ class FrameReconstruction:
             frame_matrix=self.frame_matrix.tolist(),
             frame_determinant=float(np.linalg.det(self.frame_matrix)),
             frame_center_m=[0., 0.],
+            encoding_origin_m=self.encoding_origin_m.tolist(),
+            native_frame_origin_m=self.native_frame_origin_m.tolist(),
             frame_operation="joint orthogonal spin, k and output-coordinate transform; native array ordering retained",
             k_diagnostics_frame="native acquisition after inverse frame rotation",
             array_resampling=False,

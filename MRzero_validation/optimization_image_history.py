@@ -36,10 +36,11 @@ class OptimizationImageHistory:
     updates the same IPython display. Both initially show the latest image.
     ``origin='upper'`` matches the default live plot. Choose ``'lower'`` when
     the live plot uses a physical image extent and a lower image origin.
+    ``language='en'`` selects English labels; French remains the default.
     """
 
     def __init__(self, reference, baseline, every=20, *,
-                 title="Evolution du scan simulé", origin="upper"):
+                 title=None, origin="upper", language="fr"):
         if isinstance(every, (bool, np.bool_)) or int(every) != every or every < 1:
             raise ValueError("every must be a positive integer.")
         self.every = int(every)
@@ -49,9 +50,13 @@ class OptimizationImageHistory:
             raise ValueError("reference and baseline must have the same image shape.")
         if origin not in ("upper", "lower"):
             raise ValueError("origin must be 'upper' or 'lower'.")
+        if language not in ("fr", "en"):
+            raise ValueError("language must be 'fr' or 'en'.")
         self.origin = origin
+        self.language = language
         self.vmax = float(max(self.reference.max(), self.baseline.max(), np.finfo(np.float32).eps))
-        self.title = str(title)
+        self.title = str(title if title is not None else
+                         ("Simulated scan evolution" if language == "en" else "Evolution du scan simulé"))
         self._iterations = []
         self._images = []
         self._display_handle = None
@@ -106,6 +111,9 @@ class OptimizationImageHistory:
 
     def html(self, *, standalone=False):
         """Return an offline viewer; slider positions use true iteration labels."""
+        def label(french, english):
+            return english if self.language == "en" else french
+
         def panel(image, caption):
             return (f'<figure style="margin:0;min-width:0"><img alt="{escape(caption)}" '
                     f'src="{self._png(image)}" style="display:block;width:100%;image-rendering:pixelated">'
@@ -113,11 +121,13 @@ class OptimizationImageHistory:
         frames = []
         for index, (iteration, image) in enumerate(zip(self._iterations, self._images)):
             hidden = " hidden" if index != len(self._images) - 1 else ""
-            frames.append(f'<div data-history-frame{hidden}>' + panel(image, f"Itération {iteration}") + '</div>')
+            frames.append(f'<div data-history-frame{hidden}>'
+                          + panel(image, label(f"Itération {iteration}", f"Iteration {iteration}")) + '</div>')
         if not frames:
-            frames.append('<div data-history-frame>' + panel(self.baseline, "Aucune image archivée") + '</div>')
+            frames.append('<div data-history-frame>'
+                          + panel(self.baseline, label("Aucune image archivée", "No archived image")) + '</div>')
         last = max(0, len(self._images) - 1)
-        labels = ", ".join(str(value) for value in self._iterations) or "aucune"
+        labels = ", ".join(str(value) for value in self._iterations) or label("aucune", "none")
         disabled = " disabled" if len(self._images) < 2 else ""
         # An inline handler avoids external JS libraries or notebook widgets.
         handler = ("const root=this.closest('[data-opt-images]');"
@@ -126,16 +136,18 @@ class OptimizationImageHistory:
         body = (f'<section data-opt-images style="font:14px system-ui,sans-serif;max-width:1100px;margin:1em auto">'
             f'<h3>{escape(self.title)}</h3>'
             '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">'
-            + panel(self.reference, "Référence") + panel(self.baseline, "Baseline")
+            + panel(self.reference, label("Référence", "Reference")) + panel(self.baseline, "Baseline")
             + '<div>' + ''.join(frames) + '</div></div>'
-            f'<label style="display:block;margin-top:12px">Scan simulé : '
-            f'<input aria-label="Image archivée" type="range" min="0" max="{last}" value="{last}" step="1"'
+            f'<label style="display:block;margin-top:12px">{label("Scan simulé :", "Simulated scan:")} '
+            f'<input aria-label="{label("Image archivée", "Archived image")}" type="range" min="0" max="{last}" value="{last}" step="1"'
             f' style="width:75%;vertical-align:middle" oninput="{escape(handler, quote=True)}"{disabled}></label>'
-            f'<p style="margin:6px 0;color:#666">Itérations archivées : {labels}. '
-            f'Échelle commune : 0 à {self.vmax:.6g}. '
-            f'Origine des images en {"haut" if self.origin == "upper" else "bas"}.</p></section>')
+            f'<p style="margin:6px 0;color:#666">{label("Itérations archivées :", "Archived iterations:")} {labels}. '
+            f'{label("Échelle commune : 0 à", "Shared scale: 0 to")} {self.vmax:.6g}. '
+            + (f'Image origin at the {"top" if self.origin == "upper" else "bottom"}.'
+               if self.language == "en" else f'Origine des images en {"haut" if self.origin == "upper" else "bas"}.')
+            + '</p></section>')
         if standalone:
-            return ('<!doctype html><html lang="fr"><meta charset="utf-8">'
+            return (f'<!doctype html><html lang="{self.language}"><meta charset="utf-8">'
                     '<meta name="viewport" content="width=device-width,initial-scale=1">'
                     f'<title>{escape(self.title)}</title><body>{body}</body></html>')
         return body

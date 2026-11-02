@@ -1,8 +1,8 @@
 """Native echo object, thickness spins and patient-registered ACDC responses.
 
-Imaging-to-coil alignment transforms the native spin/ADC/output coordinates
-into the patient coil frame. A second passive frame transforms their common
-representation. Scalar image values stay attached to native array indices.
+An optional fixed reference expresses imaging-to-coil alignment once in 3D.
+Q and a second passive frame define the common Fourier representation;
+scalar image values stay attached to native array indices.
 """
 
 from copy import deepcopy
@@ -14,6 +14,7 @@ from b0_regularization import regularize_b0_local_plane
 from inplane_geometry import inplane_matrix
 from subspin_sampling import _load_source, _full_stencil_valid, _binary_mask
 from prepare_acdc_calibration import interpolate_maps
+from slice_geometry import encoding_origin, slice_basis, slice_center
 
 
 def rotation_matrix(angle_deg):
@@ -28,24 +29,66 @@ def _slice_geometry(inputs):
     thickness = float(scan["slice_thickness_mm"]) * 1e-3
     if position.shape != (3,) or not np.isfinite(position).all() or not np.isfinite(thickness) or thickness <= 0:
         raise ValueError("The EPI slice needs finite patient position and positive thickness.")
-    expected = np.array([1., 0., 0., 1.]) / np.sqrt(2)
-    for metadata in (scan, raw):
-        if "slice_quaternion_wxyz" in metadata:
-            quaternion = np.asarray(metadata["slice_quaternion_wxyz"], float)
-            if (quaternion.shape != (4,) or not np.isfinite(quaternion).all()
-                    or not np.isclose(np.linalg.norm(quaternion), 1., rtol=0, atol=1e-8)
-                    or not np.allclose(abs(np.dot(quaternion, expected)), 1., rtol=0, atol=1e-8)):
-                raise ValueError("Native echo shim preparation supports the validated axial slice frame only.")
-    if "slice_position_mm" in raw and not np.isclose(raw["slice_position_mm"][2], position[2], rtol=0, atol=1e-3):
-        raise ValueError("B0 and EPI measurements describe different slice planes.")
-    return position, thickness
+    basis = slice_basis(scan)
+    if ("slice_quaternion_wxyz" in raw
+            and not np.allclose(slice_basis(raw), basis, rtol=0, atol=1e-6)):
+        raise ValueError("B0 and EPI measurements describe different slice orientations.")
+    if "slice_position_mm" in raw:
+        raw_position = np.asarray(raw["slice_position_mm"], dtype=float)
+        if (raw_position.shape != (3,) or not np.isfinite(raw_position).all()
+                or not np.allclose(raw_position, position, rtol=0, atol=1e-3)):
+            raise ValueError("B0 and EPI measurements describe different slice planes/origins.")
+    if ("slice_thickness_mm" in raw
+            and not np.isclose(float(raw["slice_thickness_mm"]) * 1e-3,
+                               thickness, rtol=0, atol=1e-6)):
+        raise ValueError("B0 and EPI measurements describe different slice thicknesses.")
+    return position, thickness, basis
+
+
+def _calibration_alignment(position_mm, basis, planar_alignment, reference_pose):
+    """Map native local vectors to aligned patient coordinates for coil queries.
+
+    An explicit reference freezes the alignment in the scanner/patient frame.
+    Without one, retain the historical rotation about each current slice.
+    This identifies a reference convention, not a measured hardware affine.
+    """
+    alignment_3d = np.eye(3)
+    alignment_3d[:2, :2] = planar_alignment
+    if reference_pose is None:
+        reference_basis = basis
+        reference_center = position_mm * 1e-3
+        reference = None
+        scope = "slice_local"
+    else:
+        if (not isinstance(reference_pose, dict)
+                or "slice_position_mm" not in reference_pose
+                or "slice_quaternion_wxyz" not in reference_pose):
+            raise ValueError("alignment_reference_pose needs slice_position_mm and slice_quaternion_wxyz.")
+        reference_basis = slice_basis(reference_pose)
+        reference_center = slice_center(reference_pose) * 1e-3
+        reference = dict(slice_position_mm=(reference_center * 1000).tolist(),
+                         slice_quaternion_wxyz=np.asarray(reference_pose["slice_quaternion_wxyz"], float).tolist())
+        scope = "scanner_fixed"
+    patient_alignment = np.eye(4)
+    patient_alignment[:3, :3] = reference_basis @ alignment_3d @ reference_basis.T
+    patient_alignment[:3, 3] = reference_center - patient_alignment[:3, :3] @ reference_center
+    native_to_patient = np.eye(4)
+    if reference_pose is None:
+        # Keep the historical operation order for legacy notebooks.
+        native_to_patient[:3, :3] = basis @ alignment_3d
+        native_to_patient[:3, 3] = position_mm * 1e-3
+    else:
+        native_to_patient[:3, :3] = patient_alignment[:3, :3] @ basis
+        native_to_patient[:3, 3] = patient_alignment[:3, :3] @ (position_mm * 1e-3) + patient_alignment[:3, 3]
+    return native_to_patient, patient_alignment, reference, scope
 
 
 def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings, *,
                              frame_angle_deg=0., alignment_angle_deg=180.,
                              alignment_mirror_x=False, alignment_mirror_y=False,
                              frame_mirror_x=False, frame_mirror_y=False,
-                             alignment_center_m=(0., 0.), subspins_z=8,
+                             alignment_center_m=(0., 0.), alignment_reference_pose=None,
+                             subspins_z=8,
                              rate_mode="pooled", b0_mode="regularized",
                              b0_sigma_pixels=1., quality_mask=None,
                              current_response=None, b0_weighting="uniform",
@@ -54,12 +97,27 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
 
     Native 128x128 B0 and echo amplitudes are never reduced to a 64x64 map.
     Scalar fields remain attached to native object indices. Imaging-to-coil
-    alignment Q transforms both their coordinates and ADC k. Patient queries
-    are ``(-QY, QX, slice_Z + dz)``. Passive frame P transforms XY and k once
-    more, giving combined matrix O=P@Q. The model must also apply O to its
-    reconstruction output grid. Mirrors precede rotations: R@diag(mx,my).
-    Only origin-centered transforms are supported, avoiding an unmodeled
-    translation phase. Raw measured data are never reindexed/interpolated.
+    alignment Q transforms native coordinates relative to the measured slice
+    center and ADC k. Legacy patient queries are ``slice_center + R @ (Qx, Qy, dz)``,
+    where R is the measured native readout/phase/normal basis in patient space.
+    Here x/y are local vectors, while the native X_m/Y_m grids retain their
+    absolute header coordinates. Passive frame P transforms local XY and k
+    once more, giving combined matrix O=P@Q. The model must also apply O to
+    its centered reconstruction output grid. Mirrors precede rotations:
+    R@diag(mx,my). The measured slice displacement never rotates around the
+    scanner isocenter. The acquisition's receiver/Fourier origin is handled by
+    centered model coordinates, without inventing a translation phase. The
+    optional alignment_center_m remains an additional registration transform
+    and must be zero. Raw measured data are never reindexed/interpolated.
+
+    With ``alignment_reference_pose`` containing fixed ``slice_position_mm``
+    and ``slice_quaternion_wxyz``, Q defines a single scanner-fixed alignment:
+    G(p) = c_ref + R_ref @ Q_3D @ R_ref.T @ (p-c_ref). Each measured point
+    p = c_slice + R_slice @ (x,y,dz), its edges and thickness normal are mapped
+    by this same G, then by patient_to_source_m. The reference pose must remain
+    fixed when changing the acquisition. It reproduces the legacy placement
+    on the reference slice and avoids moving the coil frame with other slices.
+    Q and P still define the common passive Fourier representation O=P@Q.
 
     ``quality_mask`` optionally restricts field-fit/field-limit points, never
     object support. By default every retained child is a field-limit point.
@@ -84,6 +142,10 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     -0.5 * readout_polarity * odd_even_phase_rad. It remains in the zero-B0
     reference; the frequency offset is removed with B0. No input is mutated.
 
+    For spiral acquisitions, ``phase_shift_mm`` replaces ``odd_even_phase_rad``:
+    it translates native Y before alignment and 3D coil queries. No EPI
+    navigator or odd/even phase correction is applied to a spiral.
+
     ``rate_mode='complex'`` uses ``fit['multi_echo']``: exponential envelope,
     residual R2, refined B0, selected unresolved frequency dispersion and the
     exact fixed in-plane B0 slopes used during the complex fit. It requires
@@ -95,6 +157,8 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         if not isinstance(baseline_calibration, dict):
             raise ValueError("baseline_calibration must be None or a dictionary of scalar parameters.")
         names = ("frequency_offset_Hz", "readout_shift_mm", "odd_even_phase_rad")
+        if inputs["acquisition"].get("sequence_kind") == "spiral":
+            names = ("frequency_offset_Hz", "readout_shift_mm", "phase_shift_mm")
         unknown = set(baseline_calibration) - set(names)
         if unknown:
             raise ValueError(f"Unknown baseline_calibration parameters: {sorted(unknown)}.")
@@ -126,10 +190,16 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         raise ValueError("subspins_z must be a positive integer.")
     count = int(subspins_z)
     raw, field, acquisition = inputs["b0_raw"], inputs["field"], inputs["acquisition"]
+    position_mm, thickness, patient_basis = _slice_geometry(inputs)
+    native_to_patient, patient_alignment, alignment_reference, alignment_scope = _calibration_alignment(
+        position_mm, patient_basis, alignment_rotation, alignment_reference_pose)
+    native_origin = encoding_origin(inputs["scan_metadata"])
     original_X, original_Y = (np.asarray(raw[key], dtype=float) for key in ("X_m", "Y_m"))
     X, Y = original_X, original_Y
     if baseline_parameters is not None and baseline_parameters["readout_shift_mm"] != 0:
         X = X + baseline_parameters["readout_shift_mm"] * 1e-3
+    if baseline_parameters is not None and baseline_parameters.get("phase_shift_mm", 0.) != 0:
+        Y = Y + baseline_parameters["phase_shift_mm"] * 1e-3
     if X.ndim != 2 or min(X.shape) < 2 or Y.shape != X.shape or not np.isfinite(X).all() or not np.isfinite(Y).all():
         raise ValueError("Native echo coordinates must be finite matching 2D grids.")
     coordinates = np.stack((X, Y), axis=-1)
@@ -143,9 +213,10 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     object_area = abs(float(np.linalg.det(np.stack((column_step, row_step)))))
     if object_area <= 0 or not np.allclose(coordinates, expected, rtol=0, atol=1e-10):
         raise ValueError("Native coordinates must have a regular nondegenerate physical grid.")
-    image_area = float(np.prod(acquisition["FOV_m"]) / np.asarray(acquisition["kx_mInv"]).size)
+    image_shape = acquisition.get("image_shape", np.asarray(acquisition["kx_mInv"]).shape)
+    image_area = float(np.prod(acquisition["FOV_m"]) / np.prod(image_shape))
     if not np.isfinite(image_area) or image_area <= 0:
-        raise ValueError("EPI FOV and trajectory must define positive pixel area.")
+        raise ValueError("Imaging FOV and output matrix must define positive pixel area.")
     spacing_mm = np.array([np.linalg.norm(row_step), np.linalg.norm(column_step)]) * 1000
     measured_b0 = np.asarray(field["b0Hz"], dtype=float)
     if measured_b0.shape != X.shape:
@@ -261,16 +332,18 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     if not covered.any():
         raise ValueError("No native object pixels have reliable B0 and finite amplitude/rate.")
     quality = np.ones(X.shape, dtype=bool) if quality_mask is None else _binary_mask(quality_mask, X.shape, "Field quality mask")
-    position_mm, thickness = _slice_geometry(inputs)
     dz = ((np.arange(count) + .5) / count - .5) * thickness
-    physical_xy = (coordinates - center) @ alignment_rotation.T + center
-    frame_xy = physical_xy @ frame_rotation.T
+    local_coordinates = coordinates - native_origin
+    aligned_local = local_coordinates @ alignment_rotation.T
+    physical_xy = aligned_local + native_origin
+    frame_xy = local_coordinates @ combined.T
     parent_index = np.flatnonzero(covered)
-    physical_points = physical_xy.reshape(-1, 2)[parent_index]
-    xyz = np.empty((len(parent_index), count, 3))
-    xyz[..., 0] = -physical_points[:, 1, None]
-    xyz[..., 1] = physical_points[:, 0, None]
-    xyz[..., 2] = position_mm[2] * 1e-3 + dz
+    physical_points = local_coordinates.reshape(-1, 2)[parent_index]
+    local_xyz = np.empty((len(parent_index), count, 3))
+    local_xyz[..., :2] = physical_points[:, None, :]
+    local_xyz[..., 2] = dz
+    xyz_patient_native = local_xyz @ patient_basis.T + position_mm * 1e-3
+    xyz = local_xyz @ native_to_patient[:3, :3].T + native_to_patient[:3, 3]
 
     settings = dict(calibration_settings)
     if settings.get("units") != "Hz/A" or settings.get("registration_confirmed") is not True:
@@ -285,6 +358,9 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     source, axes, source_valid, digest = _load_source(str(path), stat.st_mtime_ns, stat.st_size)
     if settings.get("source_sha256") not in (None, digest):
         raise ValueError("Calibration differs from its confirmed source_sha256.")
+    # Preserve the complete physical and local maps in every optimization.
+    native_to_source = affine @ native_to_patient
+    effective_patient_to_source = affine @ patient_alignment
     query = xyz @ affine[:3, :3].T + affine[:3, 3]
     maps, valid_children = interpolate_maps(source, axes, query)
     valid_children &= _full_stencil_valid(axes, source_valid, query)
@@ -295,8 +371,7 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         # Edges follow the native row/column axes through physical alignment;
         # the passive frame affects encoding vectors, never patient queries.
         native_edges = np.stack((row_step, column_step))
-        aligned_edges = native_edges @ alignment_rotation.T
-        patient_edges = np.column_stack((-aligned_edges[:, 1], aligned_edges[:, 0], np.zeros(2)))
+        patient_edges = np.column_stack((native_edges, np.zeros(2))) @ native_to_patient[:3, :3].T
         endpoints = np.stack((-.5 * patient_edges[0], .5 * patient_edges[0],
                               -.5 * patient_edges[1], .5 * patient_edges[1]))
         endpoint_xyz = xyz[..., None, :] + endpoints
@@ -322,6 +397,8 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     if not parent_valid.any() or not np.any(parent_valid & quality):
         raise ValueError("No complete ACDC-covered parents with field-limit points remain.")
     parent_index, xyz, maps = parent_index[keep], xyz[keep], maps[keep]
+    xyz_patient_native = xyz_patient_native[keep]
+    retained_query = query[keep]
     if inplane_voxel:
         field_gradient = field_gradient[keep]
         corner_linearization_error = corner_linearization_error[keep]
@@ -338,7 +415,8 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     child_Y = np.repeat(frame_points[:, 1, None], count, axis=1)
     child_quality = np.repeat(quality.ravel()[parent_index, None], count, axis=1)
     native_acquisition = deepcopy(acquisition)
-    if baseline_parameters is not None and baseline_parameters["odd_even_phase_rad"] != 0:
+    native_acquisition["encoding_origin_m"] = native_origin.copy()
+    if baseline_parameters is not None and baseline_parameters.get("odd_even_phase_rad", 0.) != 0:
         times = np.asarray(acquisition.get("time_s"), dtype=float)
         sample_shape = np.asarray(acquisition["kx_mInv"]).shape
         if (times.ndim != 2 or times.shape != sample_shape or times.shape[1] < 2
@@ -356,7 +434,8 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     framed_acquisition = deepcopy(native_acquisition)
     k = np.stack((acquisition["kx_mInv"], acquisition["ky_mInv"]), axis=-1) @ combined.T
     framed_acquisition.update(kx_mInv=k[..., 0], ky_mInv=k[..., 1],
-        frame_angle_deg=float(frame_angle_deg) % 360., combined_frame_matrix=combined.copy())
+        frame_angle_deg=float(frame_angle_deg) % 360., combined_frame_matrix=combined.copy(),
+        encoding_origin_m=np.zeros(2), native_frame_origin_m=native_origin.copy())
     anchor = float(fit["amplitude_reference_time_s"])
     if not np.isfinite(anchor) or anchor < 0:
         raise ValueError("The echo amplitude time anchor must be finite nonnegative seconds.")
@@ -365,14 +444,20 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         "xyz_patient_m": xyz, "frame_angle_deg": float(frame_angle_deg) % 360.,
         "alignment_angle_deg": float(alignment_angle_deg) % 360.,
         "combined_frame_matrix": combined.copy(),
+        "native_frame_origin_m": native_origin.copy(),
+        "native_to_patient_basis": patient_basis.copy(),
+        "xyz_patient_native_m": xyz_patient_native,
+        "patient_alignment_m": patient_alignment.copy(),
+        "native_local_to_aligned_patient_m": native_to_patient.copy(),
+        "native_local_to_source_m": native_to_source.copy(),
         "through_plane_B0": "Native measured 2D B0 extruded; no invented through-plane B0 gradient."}
     response = {"enabled": True, "tau_s": 133e-6 / np.log(100)} if current_response is None else deepcopy(current_response)
     experiment = {"m0_proxy": amplitudes, "acquisition": framed_acquisition,
         "geometry": {"X_m": child_X, "Y_m": child_Y,
             "Z_m": np.broadcast_to(dz, shape).copy(), "slice_thickness_mm": thickness * 1000,
             "spacing_mm": spacing_mm, "position_mm": position_mm.copy(),
-            "orientation": np.array([0., 1., 0., -1., 0., 0.]),
-            "coordinate_system": "Passive sequence XY; patient positions stored separately in subspins."},
+            "orientation": patient_basis[:, :2].T.ravel().copy(),
+            "coordinate_system": "Slice-centered passive sequence XY; absolute patient positions stored separately in subspins."},
         "field": {"b0Hz": b0_children, "measured_b0Hz": (b0_children.copy()
             if baseline_parameters is None else np.repeat(measured_b0.ravel()[parent_index, None], count, axis=1)),
             "simulation_mask": np.ones(shape, dtype=bool), "mask": child_quality},
@@ -383,20 +468,32 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         "provenance": {"source_sha256": deepcopy(inputs.get("source_sha256", {})),
             "baseline_calibration": deepcopy(baseline_parameters),
             "object_model": "Native GRE echo amplitude, effective residual R2*, native measured B0.",
-            "alignment_interpretation": "Imaging-to-coil registration applied jointly to spin, ADC and output coordinates.",
+            "alignment_interpretation": ("Scanner-fixed 3D map registration anchored to the declared reference pose; Q/P also define a joint passive Fourier representation."
+                if alignment_scope == "scanner_fixed" else
+                "Slice-local imaging-to-coil alignment; spin, ADC and output coordinates share a common representation."),
+            "slice_origin_interpretation": ("Measured patient slice is mapped by a fixed 3D calibration alignment; Fourier coordinates remain relative to its receiver origin."
+                if alignment_scope == "scanner_fixed" else
+                "Measured patient slice center is added after local imaging-to-coil alignment; Fourier coordinates are relative to the receiver origin."),
             "passive_frame_changes_physical_placement": False},
         "assumptions": ["GRE receive-weighted amplitude and saturation are not PD/T1 corrected.",
             "Native-voxel R2* includes unresolved dephasing; it is not intrinsic T2.",
-            "Through-plane object amplitude and B0 are uniform; 3D ACDC maps vary at each thickness point."],
+            "Through-plane object amplitude and B0 are uniform; 3D ACDC maps vary along the measured slice normal at each thickness point."],
         "optimization_ready": True}
     baseline_interpretation = ("Readout displacement is assumed to be a rigid GRE object/B0 registration shift; "
         "zero-current magnitude cannot distinguish a phase-ramp origin error or validate imaging-to-ACDC registration.")
+    if acquisition.get("sequence_kind") == "spiral":
+        baseline_interpretation = ("Native X/Y displacements are assumed rigid GRE object/B0 registration shifts; "
+            "coil maps are resampled at translated patient positions. Zero-current magnitude alone cannot validate imaging-to-ACDC registration.")
     if baseline_parameters is not None:
         experiment["assumptions"].append(baseline_interpretation)
     calibration = {"acdc_maps": maps, "X_m": child_X.copy(), "Y_m": child_Y.copy(),
         "units": "Hz/A", "spatial_valid_mask": np.ones(shape, dtype=bool),
         "registration_confirmed": True, "metadata": dict(settings, source_file=str(path),
-            source_sha256=digest, source_channel_order=np.arange(1, maps.shape[-1] + 1))}
+            source_sha256=digest, source_channel_order=np.arange(1, maps.shape[-1] + 1),
+            native_local_to_source_m=native_to_source.copy(),
+            effective_patient_to_source_m=effective_patient_to_source.copy(),
+            alignment_reference_pose=deepcopy(alignment_reference),
+            alignment_scope=alignment_scope)}
     if inplane_voxel:
         experiment["inplane_voxel"] = {
             "edge_vectors_m": np.stack((row_step, column_step)) @ combined.T,
@@ -447,6 +544,7 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         "excluded_ACDC_amplitude_fraction_of_baseline": (gradient_covered_mass - retained_mass) / baseline_mass,
         "retained_amplitude_fraction_of_requested": retained_mass / requested_mass,
         "native_pixel_area_m2": object_area, "EPI_pixel_area_m2": image_area,
+        "output_image_pixel_area_m2": image_area,
         "amplitude_area_ratio": area_ratio, "amplitude_reference_time_s": anchor,
         "rate_mode": rate_mode, "pooled_rate_accepted": accepted,
         "rate_min_sInv": float(rates.min()), "rate_max_sInv": float(rates.max()),
@@ -456,11 +554,36 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
         "complex_multi_echo_report": None if complex_fit is None else deepcopy(complex_fit.get("report", {})),
         "baseline_calibration": deepcopy(baseline_parameters),
         "baseline_calibration_interpretation": baseline_interpretation,
-        "baseline_calibration_phase_convention": "phase_offset_rad += -0.5 * polarity * odd_even_phase_rad; residual after navigator correction; retained in zero-B0 target",
+        "baseline_calibration_phase_convention": (
+            "No EPI navigator phase correction; rigid X/Y shifts act through actual Fourier coordinates and remain in the zero-B0 target."
+            if acquisition.get("sequence_kind") == "spiral" else
+            "phase_offset_rad += -0.5 * polarity * odd_even_phase_rad; residual after navigator correction; retained in zero-B0 target"),
         "baseline_calibration_frequency_convention": "constant Hz offset added after local B0/gradient fit; removed with B0 in zero-B0 target",
         "inplane_voxel_field_limit_corners_per_child": 4 if inplane_voxel else 0,
         "ACDC_corner_linearization_max_abs_error_Hz_per_A": None if not inplane_voxel else float(corner_linearization_error.max()),
         "slice_thickness_mm": thickness * 1000, "slice_center_patient_mm": position_mm.tolist(),
+        "native_to_patient_basis": patient_basis.tolist(),
+        "slice_normal_patient": patient_basis[:, 2].tolist(),
+        "calibration_pose": {
+            "coordinate_units": "m",
+            "alignment_scope": alignment_scope,
+            "alignment_reference_pose": alignment_reference,
+            "patient_alignment_m": patient_alignment.tolist(),
+            "patient_to_source_m": affine.tolist(),
+            "native_local_to_aligned_patient_m": native_to_patient.tolist(),
+            "native_local_to_source_m": native_to_source.tolist(),
+            "effective_unaligned_patient_to_source_m": effective_patient_to_source.tolist(),
+            "slice_center_source_m": native_to_source[:3, 3].tolist(),
+            "native_patient_bounds_m": np.stack((xyz_patient_native.min(axis=(0, 1)), xyz_patient_native.max(axis=(0, 1)))).tolist(),
+            "source_axes_bounds_m": [[float(axis[0]), float(axis[-1])] for axis in axes],
+            "retained_patient_bounds_m": np.stack((xyz.min(axis=(0, 1)), xyz.max(axis=(0, 1)))).tolist(),
+            "retained_source_bounds_m": np.stack((retained_query.min(axis=(0, 1)), retained_query.max(axis=(0, 1)))).tolist(),
+            "registration_confirmed_setting": True,
+            "registration_note": settings.get("registration_note", ""),
+            "registration_validation": "The supplied transform is used as declared; interpolation coverage and synthetic tests do not establish physical registration.",
+            "through_plane_B0": "Measured 2D B0 repeated through thickness; no measured normal gradient.",
+        },
+        "native_frame_origin_m": native_origin.tolist(), "model_encoding_origin_m": [0., 0.],
         "frame_angle_deg": float(frame_angle_deg) % 360.,
         "alignment_angle_deg": float(alignment_angle_deg) % 360., "alignment_center_sequence_m": center.tolist(),
         "alignment_mirror_x": bool(alignment_mirror_x), "alignment_mirror_y": bool(alignment_mirror_y),
@@ -475,6 +598,8 @@ def prepare_echo_shim_inputs(inputs, fit, calibration_path, calibration_settings
     return {"expanded_experiment": experiment, "expanded_calibration": calibration,
         "parent_shape": X.shape, "parent_flat_index": parent_index, "parent_valid_mask": parent_valid,
         "baseline_support_mask": covered, "weights": weights, "xyz_m": xyz,
+        "xyz_patient_native_m": xyz_patient_native,
+        "xyz_source_m": retained_query,
         "subspin_b0": b0_children, "fieldbasis": maps, "native_amplitude": amplitude.copy(),
         "native_rate_sInv": rate.copy(), "native_B0_Hz": b0.copy(),
         "native_measured_B0_Hz": measured_b0.copy(),

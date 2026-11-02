@@ -14,6 +14,58 @@ import numpy as np
 import torch
 
 
+def _cuda_memory_report(device):
+    """Best-effort diagnostics; never replace an original CUDA exception."""
+    report = {}
+    try:
+        free, total = torch.cuda.mem_get_info(device)
+        report.update(free_bytes=int(free), total_bytes=int(total))
+    except (RuntimeError, AssertionError) as error:
+        report["query_error"] = str(error)
+    for key, reader in (("allocated_bytes", torch.cuda.memory_allocated),
+                        ("reserved_bytes", torch.cuda.memory_reserved)):
+        try:
+            report[key] = int(reader(device))
+        except (RuntimeError, AssertionError):
+            pass
+    return report
+
+
+def _cuda_failure_guidance(error, memory):
+    """Distinguish memory exhaustion from incompatible CUDA kernels."""
+    message = str(error).lower()
+    if isinstance(error, torch.OutOfMemoryError) or "out of memory" in message:
+        values = []
+        for key, label in (("free_bytes", "GPU free"), ("total_bytes", "GPU total"),
+                           ("allocated_bytes", "this process allocated"),
+                           ("reserved_bytes", "this process reserved")):
+            if key in memory:
+                values.append(f"{label}: {memory[key] / 1024**3:.3f} GiB")
+        detail = "; ".join(values) if values else "GPU memory counters unavailable"
+        guidance = (
+            f"CUDA out of memory during the small startup test ({detail}). "
+            "A previous asynchronous CUDA failure can also surface here. "
+            "Restart the notebook kernel to release its old models and tensors, then rerun from the beginning. "
+            "Check nvidia-smi in the same GPU allocation for other processes; stop only your own unused kernels "
+            "or choose a GPU with free memory. empty_cache() cannot release tensors still referenced by a live model. "
+            "GPU_MEMORY_FRACTION and SAMPLE_CHUNK apply later, when constructing the model; "
+            "lowering them cannot fix this startup allocation. "
+            "This memory error does not establish a PyTorch/GPU build incompatibility."
+        )
+        return "out_of_memory", guidance
+    if "no kernel image" in message or "invalid device function" in message:
+        return "kernel_compatibility", (
+            "Install a PyTorch CUDA build compatible with this GPU in the notebook's "
+            "Python environment (see docs/SERVER_SETUP.md), then restart the kernel. "
+            "GPU profile names do not change the installed build."
+        )
+    return "cuda_execution", (
+        "Restart the kernel and check the original CUDA error, GPU allocation and driver. "
+        "A previous asynchronous CUDA failure may surface during this test. "
+        "Do not infer a build incompatibility from this startup failure alone."
+    )
+
+
 def select_device(profile="auto", precision="auto", *, require_cuda=False):
     """Return a device, real dtype and a small, printable settings report.
 
@@ -38,6 +90,7 @@ def select_device(profile="auto", precision="auto", *, require_cuda=False):
                            "GPU allocation and NVIDIA driver; install a compatible PyTorch/CUDA build "
                            "(see docs/SERVER_SETUP.md), then restart the kernel.")
     fallback_reason = None
+    failure_category, cuda_memory = None, None
     detected_gpu, capability, architectures = None, None, []
     if use_cuda:
         # Keep full float32 mantissas for phase accumulation; no TF32/FP16.
@@ -53,15 +106,14 @@ def select_device(profile="auto", precision="auto", *, require_cuda=False):
             _ = probe @ probe
             torch.cuda.synchronize()
         except RuntimeError as error:
+            cuda_memory = _cuda_memory_report(torch.device("cuda"))
+            failure_category, guidance = _cuda_failure_guidance(error, cuda_memory)
             fallback_reason = (
                 f"CUDA execution test failed on {detected_gpu} ({capability}) with "
                 f"PyTorch {torch.__version__}, CUDA runtime {torch.version.cuda}; "
                 f"build architectures: {', '.join(architectures) or 'unknown'}. "
                 f"Original error: {error}"
             )
-            guidance = ("Install a PyTorch CUDA build compatible with this GPU in the notebook's "
-                        "Python environment (see docs/SERVER_SETUP.md), then restart the kernel. "
-                        "GPU profile names do not change the installed build.")
             if require_cuda or profile != "auto":
                 raise RuntimeError(f"{fallback_reason}\n{guidance} "
                                    "For an explicit CPU run, set require_cuda=False and profile='cpu'.") from error
@@ -78,6 +130,7 @@ def select_device(profile="auto", precision="auto", *, require_cuda=False):
             "torch_version": torch.__version__, "cuda_runtime": torch.version.cuda,
             "detected_gpu_name": detected_gpu, "gpu_capability": capability,
             "cuda_build_architectures": architectures, "cpu_fallback_reason": fallback_reason,
+            "cuda_failure_category": failure_category, "cuda_memory_at_failure": cuda_memory,
             "require_cuda": require_cuda, "tf32": False, "mixed_precision": False}
     return device, dtype, info
 
@@ -116,8 +169,9 @@ def response_matrices(starts_s, ends_s, times_s, tau_s, rf_time_s=None):
 
     Both outputs have shape [channel, sample, state]. H has units of seconds.
     Subtracting the integral at each RF center resets transverse phase for GRE
-    without resetting the physical current. The notebook enables response for
-    EPI only, consistent with the measured-response assumptions of v3.
+    without resetting the physical current. The image models enable response
+    for single-RF EPI and spiral acquisitions, consistent with the measured
+    amplifier response assumption.
     """
     starts, ends = _windows(starts_s, ends_s)
     times = _real_array(times_s, "times_s").reshape(-1)
@@ -194,9 +248,11 @@ def project_currents_tensor(currents, max_current_A, total_current_limit_A,
 class ACDCModel:
     """Cache the physical model once; evaluate images and an analytic adjoint.
 
-    The object uses [phase row, readout column], coordinates in metres, coil
-    maps in Hz/A and acquisition k-space in cycles/m. Cartesian array order
-    stays independent from chronological, one-based ``line_index`` values.
+    Coordinates are in metres, coil maps in Hz/A and k-space in cycles/m.
+    Cartesian samples use [phase row, readout column]. Spiral samples may use
+    an independent 2D storage shape; ``image_shape`` defines their output grid.
+    One-based ``line_index`` labels chronological command states, including
+    individual spiral turns, independently of sample storage order.
     """
 
     def __init__(self, experiment, calibration, max_current_A=3.0, *, profile="auto",
@@ -246,30 +302,45 @@ class ACDCModel:
                     or not np.allclose(coords, calibration_coords, rtol=0, atol=1e-9)):
                 raise ValueError("Calibration coordinates must match the physical object grid within 1 nm.")
         acq = experiment["acquisition"]
-        self.image_size = np.asarray(acq["kx_mInv"]).shape
-        if len(self.image_size) != 2 or min(self.image_size) < 1:
+        origin = _real_array(acq.get("encoding_origin_m", np.zeros(2)), "encoding_origin_m")
+        if origin.shape != (2,):
+            raise ValueError("encoding_origin_m must contain two finite sequence-frame coordinates.")
+        self.encoding_origin_m = origin.copy()
+        self.sampling_shape = np.asarray(acq["kx_mInv"]).shape
+        if len(self.sampling_shape) != 2 or min(self.sampling_shape) < 1:
             raise ValueError("Acquisition k-space must be a nonempty 2D array.")
+        self.sequence_kind = str(acq.get("sequence_kind", "epi")).lower()
+        if self.sequence_kind not in {"epi", "gre", "spiral"}:
+            raise ValueError("sequence_kind must be epi, gre or spiral.")
+        image_shape = np.asarray(acq.get("image_shape", self.sampling_shape))
+        if (image_shape.shape != (2,) or np.iscomplexobj(image_shape) or not np.isfinite(image_shape).all()
+                or np.any(image_shape < 1) or np.any(image_shape != np.floor(image_shape))):
+            raise ValueError("image_shape must contain two positive integers.")
+        self.image_size = tuple(int(value) for value in image_shape)
+        if self.sequence_kind != "spiral" and self.image_size != self.sampling_shape:
+            raise ValueError("Cartesian acquisition image_shape must match its sample grid.")
         samples = {}
         for name in ("kx_mInv", "ky_mInv", "time_s", "line_index"):
             value = _real_array(acq[name], name)
-            if value.shape != self.image_size:
+            if value.shape != self.sampling_shape:
                 raise ValueError("All acquisition arrays must have the same 2D shape.")
             samples[name] = value.reshape(-1)
-        self.nstates = self.image_size[0]
-        self.nsamples = int(np.prod(self.image_size))
-        self.sequence_kind = str(acq.get("sequence_kind", "epi")).lower()
-        if self.sequence_kind not in {"epi", "gre"}:
-            raise ValueError("sequence_kind must be epi or gre.")
+        self.nsamples = int(np.prod(self.sampling_shape))
         starts = _real_array(acq["line_start_s"], "line_start_s").reshape(-1)
         default_ends = np.r_[starts[1:], np.inf]
         if self.sequence_kind == "gre" and ("line_end_s" not in acq or "rf_time_s" not in acq):
             raise ValueError("GRE requires line_end_s and per-ADC rf_time_s.")
         self.line_start_s, self.line_end_s = _windows(starts, acq.get("line_end_s", default_ends))
-        if starts.size != self.nstates:
+        self.nstates = starts.size
+        if self.sequence_kind != "spiral" and starts.size != self.sampling_shape[0]:
             raise ValueError("Need one current state per Cartesian row.")
         indices = samples["line_index"]
-        self.line_index = indices.reshape(self.image_size).astype(int)
-        if (np.any(indices != np.floor(indices)) or not np.all(self.line_index == self.line_index[:, :1])
+        self.line_index = indices.reshape(self.sampling_shape).astype(int)
+        if (np.any(indices != np.floor(indices))
+                or not np.array_equal(np.unique(indices), np.arange(1, self.nstates + 1))):
+            raise ValueError("Every command state must have ADC samples labeled from 1 through the number of windows.")
+        if self.sequence_kind != "spiral" and (
+                not np.all(self.line_index == self.line_index[:, :1])
                 or not np.array_equal(np.sort(self.line_index[:, 0]), np.arange(1, self.nstates + 1))):
             raise ValueError("line_index must label each row by a distinct chronological state, from 1.")
         times = samples["time_s"]
@@ -277,14 +348,14 @@ class ACDCModel:
         if (np.any(times < 0) or np.any(times < starts[state_index] - 1e-12)
                 or np.any(times >= self.line_end_s[state_index])):
             raise ValueError("Each ADC time must belong to its command window.")
-        rf = np.asarray(acq.get("rf_time_s", np.zeros(self.image_size)), dtype=np.float64)
-        if rf.shape != self.image_size or not np.isfinite(rf).all() or np.any(rf < 0) or np.any(rf.reshape(-1) > times):
+        rf = np.asarray(acq.get("rf_time_s", np.zeros(self.sampling_shape)), dtype=np.float64)
+        if rf.shape != self.sampling_shape or not np.isfinite(rf).all() or np.any(rf < 0) or np.any(rf.reshape(-1) > times):
             raise ValueError("Each ADC needs an RF center no later than its acquisition.")
         rf = rf.reshape(-1)
-        if self.sequence_kind == "epi":
+        if self.sequence_kind in {"epi", "spiral"}:
             # Preserve the original single-RF convention, whose center is t=0.
             if np.any(np.abs(rf) > 1e-12):
-                raise ValueError("EPI times must be relative to the single RF center at zero.")
+                raise ValueError("EPI and spiral times must be relative to the single RF center at zero.")
         else:
             rf_by_state = []
             for state in range(self.nstates):
@@ -305,8 +376,8 @@ class ACDCModel:
         if tau.shape != (self.nc,) or np.any(tau <= 0):
             raise ValueError("tau_s needs one positive value or one per channel.")
         self.current_response = {"enabled": bool(enabled), "tau_s": tau.copy()}
-        if enabled and self.sequence_kind != "epi":
-            raise ValueError("First-order response is currently enabled for EPI only; disable it for GRE.")
+        if enabled and self.sequence_kind not in {"epi", "spiral"}:
+            raise ValueError("First-order response is enabled for single-RF EPI/spiral only; disable it for GRE.")
         limits = _real_array(max_current_A, "max_current_A")
         limits = np.full(self.nc, limits.item()) if limits.size == 1 else limits.reshape(-1)
         if limits.shape != (self.nc,) or np.any(limits < 0):
@@ -316,8 +387,10 @@ class ACDCModel:
         self.B_quality = self.tensor(maps[self.quality_mask])
         self.b0_numpy = np.where(self.support, b0, 0)
         self._amplitude = self.tensor(m0[self.support])[:, None]
-        self._x = self.tensor(np.asarray(geometry["X_m"])[self.support])[:, None]
-        self._y = self.tensor(np.asarray(geometry["Y_m"])[self.support])[:, None]
+        # Twix samples encode displacement from the acquired FOV center.
+        # Geometry and coil maps can retain absolute physical coordinates.
+        self._x = self.tensor(np.asarray(geometry["X_m"])[self.support] - origin[0])[:, None]
+        self._y = self.tensor(np.asarray(geometry["Y_m"])[self.support] - origin[1])[:, None]
         self._b0 = self.tensor(b0[self.support])[:, None]
         t2 = np.asarray(experiment["relaxation"]["T2star_s"], dtype=np.float64)
         if t2.ndim == 0:
@@ -327,15 +400,15 @@ class ACDCModel:
         self._rate = self.tensor(1 / t2[self.support])[:, None]
         self._evolution = self.tensor(times - rf)
         self._kx, self._ky = self.tensor(samples["kx_mInv"]), self.tensor(samples["ky_mInv"])
-        phase = _real_array(acq.get("phase_offset_rad", np.zeros(self.image_size)), "phase_offset_rad")
-        if phase.shape != self.image_size:
+        phase = _real_array(acq.get("phase_offset_rad", np.zeros(self.sampling_shape)), "phase_offset_rad")
+        if phase.shape != self.sampling_shape:
             raise ValueError("phase_offset_rad must match the acquisition grid.")
         self._phase = self.tensor(phase.reshape(-1))
         self.TE_s = float(acq["TE_s"])
         if not np.isfinite(self.TE_s) or self.TE_s < 0:
             raise ValueError("TE_s must be finite and nonnegative.")
-        self.time_s = times.reshape(self.image_size)
-        self.rf_time_s = rf.reshape(self.image_size)
+        self.time_s = times.reshape(self.sampling_shape)
+        self.rf_time_s = rf.reshape(self.sampling_shape)
         H = np.maximum(0, np.minimum(times[:, None], self.line_end_s)
                        - np.maximum(rf[:, None], starts))
         self.H_instant = self.tensor(H)
@@ -393,11 +466,16 @@ class ACDCModel:
         self.ideal_image, self.ideal_kdata = self.reference, self.numpy(self._ideal_kdata)
         self.runtime_info.update({"selected_profile": actual_profile,
                                   "sample_chunk": self.sample_chunk, "samples": self.nsamples,
+                                  "sampling_shape": list(self.sampling_shape),
+                                  "image_shape": list(self.image_size),
+                                  "command_states": self.nstates,
+                                  "command_state_unit": "spiral turn" if self.sequence_kind == "spiral" else "Cartesian line",
                                   "object_points": nvox, "base_cache": self._cache_base,
                                   "retain_contributions": self._retain_contributions,
                                   "cache_MiB": self._full_cache_bytes / 1024**2 if self._cache_base else 0,
                                   "memory_budget_MiB": budget / 1024**2,
-                                  "response_enabled": bool(enabled), "common_tau": self.common_tau})
+                                  "response_enabled": bool(enabled), "common_tau": self.common_tau,
+                                  "encoding_origin_m": self.encoding_origin_m.tolist()})
 
     def tensor(self, value):
         return torch.as_tensor(value, device=self.device, dtype=self.dtype)
@@ -433,8 +511,9 @@ class ACDCModel:
         base = self._base_cache[:, selected] if b0_enabled and self._base_cache is not None else self._make_base(selected, b0_enabled)
         return base * torch.polar(torch.ones_like(phase), phase)
 
-    @staticmethod
-    def _image(kdata):
+    def _image(self, kdata):
+        if self.sequence_kind == "spiral":
+            raise ValueError("Spiral data require RealisticACDCModel or an echo model with nonuniform reconstruction.")
         return torch.fft.fftshift(torch.fft.ifft2(torch.fft.ifftshift(kdata)))
 
     def _forward_tensor(self, currents, *, response_enabled=None, b0_enabled=True, retain=False):
@@ -446,7 +525,7 @@ class ACDCModel:
             signal[selected] = contribution.sum(dim=0)
             if retain:
                 saved.append(contribution)
-        kdata = signal.reshape(self.image_size)
+        kdata = signal.reshape(self.sampling_shape)
         image = self._image(kdata)
         return (image, kdata, saved) if retain else (image, kdata)
 

@@ -195,7 +195,7 @@ class MRzeroExperimentModel(ACDCModel):
         """Obtain the fixed signal contribution from native MRzero, never NumPy."""
         first, stop, step = selected.indices(self.nsamples)
         if step != 1:
-            raise ValueError("Native baseline blocks require consecutive Cartesian sample indices.")
+            raise ValueError("Native baseline blocks require consecutive stored sample indices.")
         key = (first, stop)
         if b0_enabled and key in self._native_cpu_blocks:
             return self._native_cpu_blocks[key].to(self.device)

@@ -82,6 +82,28 @@ class SpatialReductionTests(unittest.TestCase):
 
 
 class FieldShimTests(unittest.TestCase):
+    def test_spiral_unequal_turns_keep_independent_field_raster_and_disabled_channel(self):
+        model = tiny_field_model()
+        model.sequence_kind, model.nstates = "spiral", 3
+        model.line_start_s = np.array([40e-6, 180e-6, 370e-6])
+        model.line_end_s = np.array([180e-6, 370e-6, 540e-6])
+        model.max_current_A[0] = 0.
+        pattern = model.maps_numpy[..., 1]
+        model.b0_numpy = -.7 * pattern
+        before = model.line_start_s.copy()
+        result = solve_field_shim_waveforms(model, max_iterations=30)
+        for name in ("static", "dynamic"):
+            fit = result[name]
+            np.testing.assert_array_equal(fit["currents_A"][0], 0.)
+            self.assertLess(fit["report"]["full_field_nrmse"], .1)
+            self.assertEqual(fit["report"]["sequence_kind"], "spiral")
+            self.assertEqual(fit["report"]["image_command_state_unit"], "spiral turn")
+            self.assertEqual(fit["report"]["image_command_states"], 3)
+        self.assertEqual(result["dynamic"]["currents_A"].shape, (2, 50))
+        self.assertFalse(result["dynamic"]["report"]["constrained_to_image_command_boundaries"])
+        np.testing.assert_allclose(np.diff(result["dynamic"]["state_edges_rf_s"]), 10e-6)
+        np.testing.assert_array_equal(model.line_start_s, before)
+
     def test_negative_B0_target_static_and_dynamic_reports_match_full_fields(self):
         model = tiny_field_model()
         original = {name: getattr(model, name).copy() for name in (

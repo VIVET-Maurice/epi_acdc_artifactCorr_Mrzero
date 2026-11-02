@@ -27,11 +27,11 @@ PARAMETER_NAMES = ("frequency_offset_Hz", "readout_shift_mm", "odd_even_phase_ra
 DEFAULT_BOUNDS = dict(zip(PARAMETER_NAMES, (30., 2., .15)))
 
 
-def _parameter_vector(parameters):
-    if not isinstance(parameters, dict) or set(parameters) - set(PARAMETER_NAMES):
+def _parameter_vector(parameters, names=PARAMETER_NAMES):
+    if not isinstance(parameters, dict) or set(parameters) - set(names):
         raise ValueError("Calibration parameters must be a dictionary of supported parameter names.")
     values = []
-    for name in PARAMETER_NAMES:
+    for name in names:
         value = parameters.get(name, 0.)
         if (isinstance(value, (bool, np.bool_)) or not np.isscalar(value)
                 or not np.isrealobj(value) or not np.isfinite(value)):
@@ -134,19 +134,28 @@ def fit_baseline_calibration(acquisition, baseline_kdata, measured_image, recons
     Test pixels never enter fitting, gain estimation, starts or model selection.
     Rejection retains the original model and archives the candidate diagnostic.
     """
-    basis = phase_basis(acquisition)
+    return _fit_calibration(acquisition, baseline_kdata, measured_image, reconstruction,
+                            bounds, block_size, guard_pixels,
+                            basis=phase_basis(acquisition), parameter_names=PARAMETER_NAMES,
+                            default_bounds=DEFAULT_BOUNDS)
+
+
+def _fit_calibration(acquisition, baseline_kdata, measured_image, reconstruction,
+                     bounds, block_size, guard_pixels, *, basis, parameter_names,
+                     default_bounds, report_metadata=None):
+    """Shared guarded fit engine; trajectory modules supply exact sample phases."""
     kdata = np.asarray(baseline_kdata)
     measured = np.asarray(measured_image)
     if (kdata.shape != basis.shape[1:] or not np.iscomplexobj(kdata) or not np.isfinite(kdata).all()
-            or measured.shape != kdata.shape or np.iscomplexobj(measured)
+            or measured.shape != tuple(acquisition.get("image_shape", kdata.shape)) or np.iscomplexobj(measured)
             or not np.isfinite(measured).all() or np.any(measured < 0) or not np.any(measured > 0)):
         raise ValueError("Calibration requires complex finite simulated k-space and matching nonnegative measured RSS.")
-    limits = DEFAULT_BOUNDS.copy()
+    limits = default_bounds.copy()
     if bounds is not None:
-        if not isinstance(bounds, dict) or set(bounds) - set(PARAMETER_NAMES):
+        if not isinstance(bounds, dict) or set(bounds) - set(parameter_names):
             raise ValueError("bounds must contain supported parameter names only.")
         limits.update(bounds)
-    bound = _parameter_vector(limits)
+    bound = _parameter_vector(limits, parameter_names)
     if np.any(bound <= 0):
         raise ValueError("All calibration bounds must be positive.")
     fit_mask, validation_mask, test_mask = spatial_split(measured.shape, block_size, guard_pixels)
@@ -222,7 +231,7 @@ def fit_baseline_calibration(acquisition, baseline_kdata, measured_image, recons
         at_bound = bool(np.any(abs(fitted.x) >= .98 * bound[:size]))
         eligible = bool(fitted.success and not at_bound and information["Jacobian_identifiable"])
         improves = scores["validation"]["NRMSE_percent"] < best_validation - selection_margin
-        row = {"parameter_count": size, "parameters": dict(zip(PARAMETER_NAMES, candidate.tolist())),
+        row = {"parameter_count": size, "parameters": dict(zip(parameter_names, candidate.tolist())),
                "gain_from_fit_pixels": gain, "metrics": scores, "solver_success": bool(fitted.success),
                "solver_message": str(fitted.message), "total_function_evaluations": int(sum(f.nfev for f in fits)),
                "near_parameter_bound": at_bound, **information,
@@ -239,13 +248,13 @@ def fit_baseline_calibration(acquisition, baseline_kdata, measured_image, recons
     test_improves = candidate_metrics["test"]["NRMSE_percent"] < baseline_metrics["test"]["NRMSE_percent"]
     accepted = bool(has_candidate and test_improves)
     applied = selected if accepted else zero
-    parameters = dict(zip(PARAMETER_NAMES, applied.tolist()))
+    parameters = dict(zip(parameter_names, applied.tolist()))
     report = {
         "format": "bounded_epi_baseline_calibration_v1", "accepted": accepted,
         "reason": ("Validation-selected candidate improves the untouched internal test subset." if accepted else
                    "No eligible validation improvement." if not has_candidate else
                    "Validation-selected candidate did not improve the untouched internal test subset; original model retained."),
-        "parameters": parameters, "candidate_parameters": dict(zip(PARAMETER_NAMES, selected.tolist())),
+        "parameters": parameters, "candidate_parameters": dict(zip(parameter_names, selected.tolist())),
         "bounds_symmetric_half_width": limits, "candidate_models": runs,
         "baseline": baseline_metrics, "candidate": candidate_metrics,
         "applied": candidate_metrics if accepted else baseline_metrics,
@@ -274,6 +283,8 @@ def fit_baseline_calibration(acquisition, baseline_kdata, measured_image, recons
             "Frequency and phase-encode displacement are almost degenerate; phase-encode displacement is fixed.",
             "Odd/even parameter is only a constant residual AFTER existing navigator correction, not a second navigator correction."],
     }
+    if report_metadata is not None:
+        report.update(report_metadata)
     return {"parameters": parameters, "candidate_parameters": report["candidate_parameters"], "report": report,
             "baseline_image": baseline_image, "candidate_image": candidate_image,
             "calibrated_image": candidate_image if accepted else baseline_image,
