@@ -3,8 +3,8 @@
   "raw_acquisitions_included": false,
   "calibrations_included": false,
   "saved_notebook_outputs_included": false,
-  "notebook_count": 31,
-  "file_count": 452,
+  "notebook_count": 33,
+  "file_count": 468,
   "notebook_export_adjustments": {
     "Experiment/01_reconstruction_et_B0.ipynb": [
       "portable python3 kernel",
@@ -107,6 +107,14 @@
       "saved outputs and execution state removed"
     ],
     "MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV2.1.ipynb": [
+      "portable python3 kernel",
+      "saved outputs and execution state removed"
+    ],
+    "MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV3.ipynb": [
+      "portable python3 kernel",
+      "saved outputs and execution state removed"
+    ],
+    "MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV4 (3D).ipynb": [
       "portable python3 kernel",
       "saved outputs and execution state removed"
     ],
@@ -653,6 +661,16 @@
       "sha256": "ed112a7d0986ee6cf29efc2363c8f70231a79d0b5dd77410c754a20e6f6987cc"
     },
     {
+      "path": "MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV3.ipynb",
+      "bytes": 136511,
+      "sha256": "0e218fae5cd3cd3927467f8ab11a587b5382598f7f0118f987ce29ca6d803ea3"
+    },
+    {
+      "path": "MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV4 (3D).ipynb",
+      "bytes": 36426,
+      "sha256": "2490f4373c954700126ba92b392c0bef8e9f4a3e0c8a89959f98e5292fb72121"
+    },
+    {
       "path": "MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzero_V_abstract.ipynb",
       "bytes": 154071,
       "sha256": "05c8284810e4f6b67742a1501168e33329dadb777f371030f33c461e69436d86"
@@ -681,6 +699,11 @@
       "path": "MRzero_validation/SPIRAL_07_README.md",
       "bytes": 14513,
       "sha256": "12c86b0724c8c922f71fe2435861e638f026d7edfa1eb8290e21adcb1c296767"
+    },
+    {
+      "path": "MRzero_validation/V4_VOLUME_README.md",
+      "bytes": 8626,
+      "sha256": "4b3a7ea9cb8d80e1eb9423cf341927622f2819eb167a32831dc96966de4c4ae7"
     },
     {
       "path": "MRzero_validation/_vendor/__init__.py",
@@ -944,8 +967,8 @@
     },
     {
       "path": "MRzero_validation/requirements-experiment.txt",
-      "bytes": 277,
-      "sha256": "277fd5a0791ab3017fb3683fa3652faa9142f37deac1f6affd4b4fbf7551fdc4"
+      "bytes": 368,
+      "sha256": "b5d60cf90acfeb09187f24158325c4ce8ee6055094d851476f07910a7f4a6d19"
     },
     {
       "path": "MRzero_validation/requirements.txt",
@@ -1288,6 +1311,41 @@
       "sha256": "d619a74118698c7842568e4f46b0878a45f9baa241f8af50f3e9d568afae27fb"
     },
     {
+      "path": "MRzero_validation/test_volume_epi.py",
+      "bytes": 11285,
+      "sha256": "edae597d347943a9625e4c53254ffa9ebe3c9a1b42a03aecdcbcf70826b8ebb7"
+    },
+    {
+      "path": "MRzero_validation/test_volume_epi_model.py",
+      "bytes": 10481,
+      "sha256": "2d2ade622ced191c088a84db4e4edda1eec0e9249d57120c2a4872df960728d9"
+    },
+    {
+      "path": "MRzero_validation/test_volume_inputs.py",
+      "bytes": 5248,
+      "sha256": "6358fd8c381192514c7f2c5f0df19ed796c677f749deb2bbbc8946c0eb831c6f"
+    },
+    {
+      "path": "MRzero_validation/test_volume_notebook.py",
+      "bytes": 8460,
+      "sha256": "490c3b68b48db597690b47c8430140710a71ea2be7a1e1328dac2c9eee3154dc"
+    },
+    {
+      "path": "MRzero_validation/test_volume_optimization.py",
+      "bytes": 11432,
+      "sha256": "b820f44d4898625a3aa60ad522288d11c62698dbf8d40d0926c2d71afd02b56c"
+    },
+    {
+      "path": "MRzero_validation/test_volume_slice_viewer.py",
+      "bytes": 8440,
+      "sha256": "21df083f7b885ffaf09f32b7efe3d29db36e9b8b44588938c90e2a8fa8a0c49f"
+    },
+    {
+      "path": "MRzero_validation/test_volume_twix.py",
+      "bytes": 11159,
+      "sha256": "f6b11ef8fd00b55e38ccef29a04e03a2a1aa5f9b22147db7f12377a24d313a51"
+    },
+    {
       "path": "MRzero_validation/twin_geometry.py",
       "bytes": 11055,
       "sha256": "04d825cff67ea5c3f404a6cd0c14f8b162d0a453ed36bec52f8bde7138bddcf3"
@@ -1316,6 +1374,36 @@
       "path": "MRzero_validation/validate_synthetic_matlab.m",
       "bytes": 1026,
       "sha256": "aecff314398a869bf2d99d824847ff78ff7c644197d2055f5ea567318bf9d600"
+    },
+    {
+      "path": "MRzero_validation/volume_epi.py",
+      "bytes": 22173,
+      "sha256": "debb200e21ee4b188dd09318f393374bda7d67a5bd2685ca07463216e54b275d"
+    },
+    {
+      "path": "MRzero_validation/volume_epi_model.py",
+      "bytes": 23276,
+      "sha256": "3dc31e01fb7ea0cd2df6a294c280dce13dd06cec4dc0d1a63853ed9201433264"
+    },
+    {
+      "path": "MRzero_validation/volume_inputs.py",
+      "bytes": 13869,
+      "sha256": "1007d63f7335cffcea3c09da270575b9b3bee97a844e968a14fef3e170574af1"
+    },
+    {
+      "path": "MRzero_validation/volume_optimization.py",
+      "bytes": 16553,
+      "sha256": "78617ceea862da68162e904a4c6d362b5ecdbfb49af75af189b411e1fa03c600"
+    },
+    {
+      "path": "MRzero_validation/volume_slice_viewer.py",
+      "bytes": 14527,
+      "sha256": "f1c0d61e3901b97c4ac3e8c800885230aa4dbc6b125f327a5097d597372ea4fd"
+    },
+    {
+      "path": "MRzero_validation/volume_twix.py",
+      "bytes": 25211,
+      "sha256": "62c4aaf9a70bdb7749462e05e1a591db1ef2da85fef2e4d791bbf9b61c344988"
     },
     {
       "path": "Mrzero_simulation/01_generer_acquisition_MRzero.ipynb",

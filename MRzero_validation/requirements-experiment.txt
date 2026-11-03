@@ -5,5 +5,8 @@ twixtools==0.24
 pypulseq==1.5.0.post1
 quadprog>=0.1.8,<0.2
 tqdm>=4.60,<5
+# V4: linked 3D reference/EPI/B0 viewer in Jupyter.
+ipywidgets>=8,<9
+scikit-image>=0.22,<1
 # Notebook 07: matched spiral NUFFT and trajectory-only density compensation.
 torchkbnufft>=1.5,<2
