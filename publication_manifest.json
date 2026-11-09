@@ -1,10 +1,10 @@
 {
-  "scope": "Code, notebooks without saved outputs, and Pulseq sequence files",
+  "scope": "Portable sources, notebooks without saved outputs, and Pulseq sequence files; complete directories retain every regular file byte for byte",
   "raw_acquisitions_included": false,
-  "calibrations_included": false,
+  "calibrations_included": true,
   "saved_notebook_outputs_included": false,
-  "notebook_count": 33,
-  "file_count": 468,
+  "notebook_count": 36,
+  "file_count": 602,
   "notebook_export_adjustments": {
     "Experiment/01_reconstruction_et_B0.ipynb": [
       "portable python3 kernel",
@@ -33,6 +33,15 @@
     "Experiment/03_reconstruct_epi_and_reference.ipynb": [
       "portable python3 kernel",
       "saved outputs and execution state removed"
+    ],
+    "MRzero_generations_08_09/08_V2_acdc_echo32_b0_s0_t2star_MRzero.ipynb": [
+      "complete directory preserved byte for byte"
+    ],
+    "MRzero_generations_08_09/08_acdc_echo32_b0_s0_t2star_MRzero.ipynb": [
+      "complete directory preserved byte for byte"
+    ],
+    "MRzero_generations_08_09/09_acdc_echo32_b0_s0_t2star_MRzero.ipynb": [
+      "complete directory preserved byte for byte"
     ],
     "MRzero_validation/01_audit_comparison_MRzero.ipynb": [
       "portable python3 kernel",
@@ -142,13 +151,13 @@
   "files": [
     {
       "path": ".gitattributes",
-      "bytes": 195,
-      "sha256": "4e0c9ea9961379c149d307e33cc5d1ee485e0fa2f554360bb18e4eb9d3e8725e"
+      "bytes": 296,
+      "sha256": "44453caaef3365cf516141c7e457f8e0f7916f5b33df65d179369d65e84aaa47"
     },
     {
       "path": ".gitignore",
-      "bytes": 605,
-      "sha256": "9d4a7247dc676b8ef8e48de224077f2a6e8a8c50465b02c0d5ff80e76d2a43ab"
+      "bytes": 901,
+      "sha256": "b07cf0065869c5204eb899207875aced4f81d1d0fdd1628a0af2cd38b63b47e6"
     },
     {
       "path": "Experiment/01_reconstruction_et_B0.ipynb",
@@ -564,6 +573,676 @@
       "path": "Experiment/validate_experiment_optimizer.m",
       "bytes": 7282,
       "sha256": "093789830987d32741991dd5075455841009ddb654fa53503160e70826074e70"
+    },
+    {
+      "path": "MRzero_generations_08_09/08_V2_acdc_echo32_b0_s0_t2star_MRzero.ipynb",
+      "bytes": 126347,
+      "sha256": "6c2474a39b960fa26054c0ee6b8e0afeb16a8a471638ccc7598daaf0d0f7cf73"
+    },
+    {
+      "path": "MRzero_generations_08_09/08_acdc_echo32_b0_s0_t2star_MRzero.ipynb",
+      "bytes": 125921,
+      "sha256": "b7ab902b51f3de8eb7efbb7d21731799635fff0abe9390f7ae0e888c854c525a"
+    },
+    {
+      "path": "MRzero_generations_08_09/09_acdc_echo32_b0_s0_t2star_MRzero.ipynb",
+      "bytes": 127044,
+      "sha256": "7982253decf441ade6160be30876489317ea37dabe374ad1a67a6e204a80e58f"
+    },
+    {
+      "path": "MRzero_generations_08_09/LICENSE_MRzeroCore.txt",
+      "bytes": 34451,
+      "sha256": "d529441bf978ac2f88253602049562e1871de12d444ca5678b5d051b8f7ce68c"
+    },
+    {
+      "path": "MRzero_generations_08_09/README.md",
+      "bytes": 7176,
+      "sha256": "9c2b91443ae9a2c3caa8f741ae1ec9da38f0748f51dae52c176c8911b47303ab"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/acdc_gpu.cpython-311.pyc",
+      "bytes": 73439,
+      "sha256": "2de3629f440fabc26a66d11ca5e7d161343b79bc752b01a0b7028fa218da6e91"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/acdc_gpu_field.cpython-311.pyc",
+      "bytes": 17430,
+      "sha256": "c16f5f04ee362fcc38116d305b294447aa8a737cd9f18bf4c96f6b4b03891a49"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/acdc_hardware.cpython-311.pyc",
+      "bytes": 23290,
+      "sha256": "a31748c1ce95ab77d281bdfb108c6b81ec71dbee0d04f4d9ac11aaf211318053"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/acdc_waveform_plot.cpython-311.pyc",
+      "bytes": 20413,
+      "sha256": "b8abe90db278cc62463c94416d3263f24f1065b40b2d903694bb5caf90054553"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/adc_waveform_export.cpython-311.pyc",
+      "bytes": 14328,
+      "sha256": "1749c236d1ed00d2f5578bb1b8a4cd22aaf745d450c0818f41710f638d533c44"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/b0_regularization.cpython-311.pyc",
+      "bytes": 11101,
+      "sha256": "2dd0f3ebc018e66c02a2b0dec16ae2d8eb28426d7929c246fa51180f014e1505"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/baseline_calibration.cpython-311.pyc",
+      "bytes": 26339,
+      "sha256": "d43aa0ae770d484e7c4a77b66431cdfa847ddde480117a287f76ccf0149b22ee"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/baseline_metadata_audit.cpython-311.pyc",
+      "bytes": 18696,
+      "sha256": "55c3795de63ec3676c043a4ec732800bcca7c2490df4188077b2dba4fe94c6a9"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/complex_echo_fit.cpython-311.pyc",
+      "bytes": 38678,
+      "sha256": "b0ad5ae5864f1cff97d1d8376e63b19bdce76a406954441ee36d6a7c5234e6d7"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/continuous_reconstruction.cpython-311.pyc",
+      "bytes": 28856,
+      "sha256": "e7199738429489886e677be7d2150ba63d226dc7a076c62940cba60b6a3c7fd1"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/cuda_graph_helpers.cpython-311.pyc",
+      "bytes": 12878,
+      "sha256": "1aea4a2febb804ebb01efc0242e1af70e9aadec829829908bebf593f76ead955"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/echo_object.cpython-311.pyc",
+      "bytes": 23236,
+      "sha256": "0541935f4564b20f7dd051892e8f845bb57dd94ee434c854f3c7d5c9c3357ba1"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/echo_shim_inputs.cpython-311.pyc",
+      "bytes": 54238,
+      "sha256": "dbce0f4fb800d77eca0996b22ded4d3692302d0b965efb3d1dcdcfdec2f68be8"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/experiment_echo.cpython-311.pyc",
+      "bytes": 10617,
+      "sha256": "c493e43612e0a49e8fac61fdf8b000b62a91421c9c21879a7af9274bf06ebf03"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/experiment_mrzero.cpython-311.pyc",
+      "bytes": 17315,
+      "sha256": "f325d47da091d51d7b25c169462f440341c445200d8cd5645f075610ba98c37c"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/experiment_optimization.cpython-311.pyc",
+      "bytes": 18301,
+      "sha256": "8904100957ea9b246af1c7fed02128e840f7459ba7495555ac58f25b4e586584"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/experiment_realistic.cpython-311.pyc",
+      "bytes": 6085,
+      "sha256": "cf60f576ec2b634bfa80fbb8e80e9fe32ccd01bca8fcba39c851a6e605f8f2c1"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/experiment_subspins.cpython-311.pyc",
+      "bytes": 19917,
+      "sha256": "b951f3b3d99963d5984b07fb7b6fd1b451361979218c1a618a76846f3b4b2577"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/export_acdc_waveform.cpython-311.pyc",
+      "bytes": 23345,
+      "sha256": "259df62739a4ad34d0ecdd0c6ef86477c71e879c007a9dc2e511e46bcd8d85d6"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/field_guidance.cpython-311.pyc",
+      "bytes": 13340,
+      "sha256": "3f6e19e78bfad11488e222c011dc888242f6221220e96304164a18e0b6a78900"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/field_shim_export.cpython-311.pyc",
+      "bytes": 28216,
+      "sha256": "057edbfecc7ae7efe4c99ad2e316fb3d9d174b7cd3d23d3c1d1bec2251fcc1b0"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/first_simulation_report.cpython-311.pyc",
+      "bytes": 21687,
+      "sha256": "b3c9a421f11b6de6f22c7e627e99c236aa71552db0b4062bb82cb82ac6721d49"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/inplane_geometry.cpython-311.pyc",
+      "bytes": 15032,
+      "sha256": "394397af09846daa61027a49d3c2c0689338cb4b22f56679a31b14b22b9cc317"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/live_optimization.cpython-311.pyc",
+      "bytes": 22496,
+      "sha256": "b3dbea46832f775ba6a69313813da71a7650d5c731d80f6850bb1f929f170e43"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/measured_continuous.cpython-311.pyc",
+      "bytes": 11158,
+      "sha256": "4719cd940632063d627ae975660d9c4c27c1eed180a9cc538e7b8436eb005177"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/measured_image_target.cpython-311.pyc",
+      "bytes": 19783,
+      "sha256": "7603460a54696997019b182aaa53427cb50c86e38dc41f6271f618638fe2d6de"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/measured_scan_comparison.cpython-311.pyc",
+      "bytes": 24806,
+      "sha256": "f7ab7528deacb1250027aefe621c07ac3e2d8d939e0916288cef965e6df6a47c"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/multiecho_object.cpython-311.pyc",
+      "bytes": 10869,
+      "sha256": "6e580d24e12fc4ff107e1c761aa9a0b86b413bd3b1a29c412982184c5afb8f53"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/native_b0_model.cpython-311.pyc",
+      "bytes": 23290,
+      "sha256": "cf67cd635c5a4b007678b5f0cd0f95ee558df32d4bc85e7c87d6ecea0a4da4ed"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/native_pdg.cpython-311.pyc",
+      "bytes": 18694,
+      "sha256": "4f89da10f8e3e0d23dc11e2e7dadee96d350593d68a750178013590df69df556"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/native_resummation.cpython-311.pyc",
+      "bytes": 3771,
+      "sha256": "e1369b54e2b4067fda3668bd8327076bd19e76721dc8a05e555a64a53e7ead7e"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/optimization_image_history.cpython-311.pyc",
+      "bytes": 15009,
+      "sha256": "b25b0e84d2fd0321a5d64104a01fcfb1f6a7469cfc35a370bd3315539d092844"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/prepare_acdc_calibration.cpython-311.pyc",
+      "bytes": 27358,
+      "sha256": "e62ebf5ffa439211e0d7807a77429f49a15f94cd708880df0f0a3e8aeb5bb953"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/prepare_acdc_inputs.cpython-311.pyc",
+      "bytes": 60899,
+      "sha256": "20fab5df34f437f660124f32b6c5910b8eccf749430af517ad316de86b56dc6f"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/prepare_acdc_simulation_grid.cpython-311.pyc",
+      "bytes": 9294,
+      "sha256": "f9d4faf4d40c3ed1ca090bd008b6a817c1b040ccbeb0b860197d343a8a349aa0"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/read_acdc_b0.cpython-311.pyc",
+      "bytes": 36951,
+      "sha256": "7380cfb795f6e36c8eb93e1bf6c8687417112d3d72aa265c8002abb978b21469"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/read_acdc_sequence.cpython-311.pyc",
+      "bytes": 23832,
+      "sha256": "553a519c4ab1fdb929b276123727a73d345dc9ca880c392e1e4050c9f2ca091b"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/receiver_channels.cpython-311.pyc",
+      "bytes": 4550,
+      "sha256": "99e2753b33feab56ecc8e908f59e55c9c38408e823be7f000b622a52e5382015"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/reconstruction_08.cpython-311.pyc",
+      "bytes": 2335,
+      "sha256": "5814ce7f2ad5d9d5a35d251020177fc83c69ab9940fcd3cdbeca4e0f13eb65dd"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/reference_echo_prior.cpython-311.pyc",
+      "bytes": 35755,
+      "sha256": "8f2cb14ff4c8883b442c9d10151d5845b0fe749fd740f008a16953048322360d"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/resample_acdc_maps.cpython-311.pyc",
+      "bytes": 5307,
+      "sha256": "bb6a63cbf29dbcb1575c79f4a5263b9a762104f2a1b8c8ae6a39098b83df4b4e"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/shim_export_timing.cpython-311.pyc",
+      "bytes": 14357,
+      "sha256": "47b95fd7657c26e888848e98e7a4c815f73309f8ffb766e3bf0d16518df868de"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/signal_disagreement.cpython-311.pyc",
+      "bytes": 13774,
+      "sha256": "9d7f27156a3ea7f2a9ac6279c6ae644f1a5cdc29e3811ac2ce76d61edb33272b"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/slice_geometry.cpython-311.pyc",
+      "bytes": 5689,
+      "sha256": "0b7084db08861a7af5316c4ca2f43aa47bf2b70000443cd1f5448501c497da63"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/subspin_sampling.cpython-311.pyc",
+      "bytes": 24201,
+      "sha256": "e3512241e5bd7fe250665dbab404cc48400c1d94fb43e5af3248e5aae6faa135"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/twin_geometry.cpython-311.pyc",
+      "bytes": 17387,
+      "sha256": "9a5aeea3468b59f7fb4748aa311934ac6f757c9526d3a6a94e9e72d07997a18e"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/twin_inputs.cpython-311.pyc",
+      "bytes": 47559,
+      "sha256": "fcaaa2f664d75e19ac396afb1fd43c1ef55f390374ce7009556fb25429dd6b12"
+    },
+    {
+      "path": "MRzero_generations_08_09/__pycache__/voxel_3d.cpython-311.pyc",
+      "bytes": 32191,
+      "sha256": "cb3cf19840ac879846959ddbc4f407f979c76759699f51e5dacb15dc77a5a57d"
+    },
+    {
+      "path": "MRzero_generations_08_09/_vendor/__init__.py",
+      "bytes": 71,
+      "sha256": "43cb3b799c8183523752cce0ee30bbfb9128f71679a5f08c6c3f1600ff84364b"
+    },
+    {
+      "path": "MRzero_generations_08_09/_vendor/acdc_optim/ACDC_optimization.py",
+      "bytes": 48182,
+      "sha256": "612b5e072f00612660f73720285e4accf5cd0e015952fa19885a664a0f4693a0"
+    },
+    {
+      "path": "MRzero_generations_08_09/_vendor/acdc_optim/LICENSE",
+      "bytes": 1069,
+      "sha256": "6ae3513e3ddd82f01c1fd48a8bb2daa74b35af0d8f808d6baa9b79d62f31a0af"
+    },
+    {
+      "path": "MRzero_generations_08_09/_vendor/acdc_optim/UPSTREAM.md",
+      "bytes": 381,
+      "sha256": "16a491895012cc59163edc09b203e1c4eb34d7d3ac39ec739de75a3240395522"
+    },
+    {
+      "path": "MRzero_generations_08_09/_vendor/acdc_optim/__init__.py",
+      "bytes": 1427,
+      "sha256": "9bf466817decabaa2ff2e219700e90ee6bb51c87ac99664af3ad201df1205e5a"
+    },
+    {
+      "path": "MRzero_generations_08_09/acdc_gpu.py",
+      "bytes": 49760,
+      "sha256": "f9fd7ac3ba0fb83bf41be6dd42a04763f335716fe75d7d55d6147ea86505a12b"
+    },
+    {
+      "path": "MRzero_generations_08_09/acdc_gpu_field.py",
+      "bytes": 12585,
+      "sha256": "fd08157149640dcedbd8d8719300760a6243ab5b587997ecae3705c2ccbc656c"
+    },
+    {
+      "path": "MRzero_generations_08_09/acdc_hardware.py",
+      "bytes": 16130,
+      "sha256": "0bb14edd95d1b4b3d1b5e436a9017b24f7ea2dceec2125b65cadfb3e868208ea"
+    },
+    {
+      "path": "MRzero_generations_08_09/acdc_waveform_plot.py",
+      "bytes": 13631,
+      "sha256": "3cd4befb12ed3cb706f985a8bd110313c395145c3b32f85ee8b9831c32c8cd25"
+    },
+    {
+      "path": "MRzero_generations_08_09/adc_waveform_export.py",
+      "bytes": 9206,
+      "sha256": "b6af131919c518982cf50a8ef4f089d33d2da88813de9c17ff74afa3909c2695"
+    },
+    {
+      "path": "MRzero_generations_08_09/b0_regularization.py",
+      "bytes": 6779,
+      "sha256": "ab908678c59aaa4c11e5fb25dbd09a64914220c0a5ced39291575a29a094d95f"
+    },
+    {
+      "path": "MRzero_generations_08_09/baseline_calibration.py",
+      "bytes": 17855,
+      "sha256": "4549c1cfe0904b812fdd9258d44a7e6d1685f753e13caf33d0769a845d503100"
+    },
+    {
+      "path": "MRzero_generations_08_09/baseline_metadata_audit.py",
+      "bytes": 11576,
+      "sha256": "8de0102e0939e14d12a80d9323abc201b18f7e82e4f2ea922f30e001c2daece8"
+    },
+    {
+      "path": "MRzero_generations_08_09/complex_echo_fit.py",
+      "bytes": 24717,
+      "sha256": "e63b9c0f68731e8a2618aaeda6c70a78f075831ba541f78606e52dbb87e079fe"
+    },
+    {
+      "path": "MRzero_generations_08_09/continuous_reconstruction.py",
+      "bytes": 18685,
+      "sha256": "11b37e157fb4483b33931e09f2c50cab3e5b851fa3e60cc4f4a961427637d9e4"
+    },
+    {
+      "path": "MRzero_generations_08_09/cuda_graph_helpers.py",
+      "bytes": 9863,
+      "sha256": "13bd7fc76a8e4f92605b1efea4174d44255c6c9aa151b17f37ef8220529fdb18"
+    },
+    {
+      "path": "MRzero_generations_08_09/echo_object.py",
+      "bytes": 16068,
+      "sha256": "fcf9b907670be552ef22b7d9fb3b816901d59824b8dde65f11a86a4a008589e0"
+    },
+    {
+      "path": "MRzero_generations_08_09/echo_shim_inputs.py",
+      "bytes": 42645,
+      "sha256": "568427740338ab186059d0d1edcb139988fb6f0263b024c2a99fae1fdf76a0af"
+    },
+    {
+      "path": "MRzero_generations_08_09/experiment_echo.py",
+      "bytes": 7150,
+      "sha256": "e9be83ab358657121e92ac61da3418c77ebdcedf1a2e3b92c65195205164cf01"
+    },
+    {
+      "path": "MRzero_generations_08_09/experiment_mrzero.py",
+      "bytes": 11846,
+      "sha256": "475c3e80b2464599a372488e4339578a631ada5f8bdcfe98407e6f68fc5a7648"
+    },
+    {
+      "path": "MRzero_generations_08_09/experiment_optimization.py",
+      "bytes": 14239,
+      "sha256": "5fe0040c4d079fbbbe5ad9098b67eaa7ec3ba98901a4707c133fbcacef19317a"
+    },
+    {
+      "path": "MRzero_generations_08_09/experiment_realistic.py",
+      "bytes": 4190,
+      "sha256": "94e2c3a2b5281b958f13460790898ad15413807bf2bfaf68af355db214c3f6e7"
+    },
+    {
+      "path": "MRzero_generations_08_09/experiment_subspins.py",
+      "bytes": 12594,
+      "sha256": "38530b87d5c47036d422249a4312d6499e22a1d2290d3060ace5c16b52749656"
+    },
+    {
+      "path": "MRzero_generations_08_09/export_acdc_waveform.py",
+      "bytes": 15114,
+      "sha256": "8d64a087c088168fe733f2fc4ef4cbbea028ed661b20291698238a768153d040"
+    },
+    {
+      "path": "MRzero_generations_08_09/field_guidance.py",
+      "bytes": 9030,
+      "sha256": "90a3183f82efd6e829ddb4bf0815cd0c30edcb93ee3d5880651e53a1ca336483"
+    },
+    {
+      "path": "MRzero_generations_08_09/field_shim_export.py",
+      "bytes": 17710,
+      "sha256": "5f523f85b8fa5ffddfdbaf838376c6d142601191bd011df5c27b008b34e21a44"
+    },
+    {
+      "path": "MRzero_generations_08_09/field_shim_waveforms.py",
+      "bytes": 15541,
+      "sha256": "0829e8fcdb52f2706fe7347e6380ef441ba1f498d7035adacaf83dec936dada4"
+    },
+    {
+      "path": "MRzero_generations_08_09/first_simulation_report.py",
+      "bytes": 13834,
+      "sha256": "bfd0b4c48356a32837151a2fddab1b3dec5899067be5ca1c2e3af4bcdf7d3fa5"
+    },
+    {
+      "path": "MRzero_generations_08_09/inplane_geometry.py",
+      "bytes": 10699,
+      "sha256": "8be98c9be99e390a97491f9e2412bc9d24726f09d20b8d58bfe655e514193fe7"
+    },
+    {
+      "path": "MRzero_generations_08_09/live_optimization.py",
+      "bytes": 16275,
+      "sha256": "802d5b6feaa6ca78026b9b86bf97bb27b5f3f51effdbe01c651abf17e37cfd68"
+    },
+    {
+      "path": "MRzero_generations_08_09/measured_continuous.py",
+      "bytes": 7559,
+      "sha256": "08344d8ac2fc947cdca5d7c303eb59a94d964177c904a6b2fdcaec43ee66536b"
+    },
+    {
+      "path": "MRzero_generations_08_09/measured_image_target.py",
+      "bytes": 13365,
+      "sha256": "6717be590eb76ea71601c74a73e63d4d77172c94e62cee8343989317e3c1e2f7"
+    },
+    {
+      "path": "MRzero_generations_08_09/measured_scan_comparison.py",
+      "bytes": 16934,
+      "sha256": "c41590b95d8d1bd1a50529812520c93f911b77ad2ec2edbecf64325a7616b677"
+    },
+    {
+      "path": "MRzero_generations_08_09/multiecho_object.py",
+      "bytes": 7938,
+      "sha256": "39ffec89329d31d1f597487376e39d32bac28acf9677a8076301578925f66a5b"
+    },
+    {
+      "path": "MRzero_generations_08_09/native_b0_model.py",
+      "bytes": 14573,
+      "sha256": "0ba1c977f158ce81ba9496d2d9ffd5de06ab1b58e2c8c43e2c89eb4d22bef7a6"
+    },
+    {
+      "path": "MRzero_generations_08_09/native_pdg.py",
+      "bytes": 15901,
+      "sha256": "d89c38cd9d52ab24d92c03bc4f33c430e204a059399fe59b245749a1b745c250"
+    },
+    {
+      "path": "MRzero_generations_08_09/native_resummation.py",
+      "bytes": 2258,
+      "sha256": "f6fa3427d62d4e6688717a999a1ce04adf34e89999f772473e6a226aaca640dd"
+    },
+    {
+      "path": "MRzero_generations_08_09/optimization_image_history.py",
+      "bytes": 9257,
+      "sha256": "d3e2fe30527e004af598d51351f2b303d74cc5fb1574876729014aa2781e6c0a"
+    },
+    {
+      "path": "MRzero_generations_08_09/prepare_acdc_calibration.py",
+      "bytes": 17046,
+      "sha256": "6d6200198a31ecafdf451f4409e04aa2d1d6eb6cb42808d9206ea9e68dff87fa"
+    },
+    {
+      "path": "MRzero_generations_08_09/prepare_acdc_inputs.py",
+      "bytes": 40165,
+      "sha256": "5fbd667cac4d712a5304f91bfc0fed6b81201058378c745eef06910b6ba77908"
+    },
+    {
+      "path": "MRzero_generations_08_09/prepare_acdc_simulation_grid.py",
+      "bytes": 6095,
+      "sha256": "2bb91c00401950377ffc141e1c04d5947b09c4ac2ec2b641277f2e7781f335e0"
+    },
+    {
+      "path": "MRzero_generations_08_09/read_acdc_b0.py",
+      "bytes": 21392,
+      "sha256": "70c2d133a44f5c8b7b55f31a595d8110ffeff73370e77fd529a479d677f4279c"
+    },
+    {
+      "path": "MRzero_generations_08_09/read_acdc_sequence.py",
+      "bytes": 13891,
+      "sha256": "78066074e137ed37cab04d21b6268b4f33c4f5cc81c9123f2ac703192b8af1c9"
+    },
+    {
+      "path": "MRzero_generations_08_09/receiver_channels.py",
+      "bytes": 2948,
+      "sha256": "127c15fbdb5a33f2b10eaa5e5628ce9681fa371ef54531be19a52d83950a014a"
+    },
+    {
+      "path": "MRzero_generations_08_09/reconstruction_08.py",
+      "bytes": 1716,
+      "sha256": "7ac2ae2a186a7cc47c613dd85d675feed96cf4424835d6c0888c72c2cb716864"
+    },
+    {
+      "path": "MRzero_generations_08_09/reference_echo_prior.py",
+      "bytes": 26464,
+      "sha256": "208988e4fdfe0e1e4e6ae11a225ab724718ac1d2a5207c50cda37907c1536b49"
+    },
+    {
+      "path": "MRzero_generations_08_09/resample_acdc_maps.py",
+      "bytes": 2990,
+      "sha256": "c0b669a6ec52553ba5b8e5de4853fa3b0d9c054067679d68020d836858892f30"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/baseline_calibration.json",
+      "bytes": 92481,
+      "sha256": "3a679b0ff5e3b8b45383dc394a0e07cc12bacab6e77f525da6e42a0a47a7db3b"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/baseline_calibration.npz",
+      "bytes": 802816,
+      "sha256": "a09f1fb7be9f0b4da037703f45dd2902f7fd8faf1c1c24be23ea96ee81cc0e5e"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/baseline_metadata_audit.json",
+      "bytes": 5273,
+      "sha256": "135f1d9b86a7f4e461fdc61da5f3360d128e929a1d65c6e64460cf5e1317e9d1"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/baseline_signal_disagreement.json",
+      "bytes": 35744,
+      "sha256": "07ca9ea8f247e0317dfc177a8b331dbdac3cef2f3f0dc0a45c50286c8b71b1c4"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/baseline_signal_disagreement.npz",
+      "bytes": 1294658,
+      "sha256": "5d2048a07a024cf2b2de4d2fa4c7dc501ca2dd36179f8c1b159f96dc3137d1fa"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/first_simulation.json",
+      "bytes": 8455,
+      "sha256": "67096e5e3c3ba965afeaea6002788eba2b15d0e4f04f808adab72a7644682017"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/first_simulation.npz",
+      "bytes": 736399,
+      "sha256": "d6e7d883813fef17244638f33e46e3c0fbc194a1857e61e30149a6cbab37979a"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/optimization_images.html",
+      "bytes": 1621022,
+      "sha256": "2aa2f2425db68736880c623aa3270c596715fa09878ce6b0bbba866eb37afc1b"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_20261109_181018_992626/optimization_images.npz",
+      "bytes": 7102653,
+      "sha256": "8b1ebedd8365e1df2b94decc363f588566d2c85aa6fb0f2086af8344a60d5f3d"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/baseline_calibration.json",
+      "bytes": 92519,
+      "sha256": "12d402187f9f18162dfbf5f8b1dc8ee804e6670d48469cee66a809329190ed32"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/baseline_calibration.npz",
+      "bytes": 805114,
+      "sha256": "9903fc422a61b9982eb650fa8b75e00b22cbdcd587547049a511c223d696cd0d"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/baseline_metadata_audit.json",
+      "bytes": 5276,
+      "sha256": "c595e1c5a58dba963d098a53343342089090a99f406ed48ec2812053b6fbad20"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/baseline_signal_disagreement.json",
+      "bytes": 35770,
+      "sha256": "997a49ca123ea6bb5d00c6d1748f75e3a1b99f94da821fa882d1cb3c6a391c86"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/baseline_signal_disagreement.npz",
+      "bytes": 1295066,
+      "sha256": "4254d1bff8203f8ae3c3c095454f691f1ac077bdcb230f95a55c68c3bf12a637"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/first_simulation.json",
+      "bytes": 8463,
+      "sha256": "00dd9850879d295395f085b4fe7d3e33db33e511369c763913cd507f09290915"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/first_simulation.npz",
+      "bytes": 737586,
+      "sha256": "91d36ce77ba10ec48a908a4c88b53e13505149a6d45de1223052107c4a0089e4"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/optimization_images.html",
+      "bytes": 914258,
+      "sha256": "e54d8c847b01d053452f4ac1fd7cf4b92e1b6da7fa40a0cdccc5d9164104fdd7"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero08_V2_20261109_181148_568890/optimization_images.npz",
+      "bytes": 4032511,
+      "sha256": "7241ad279af405b0357f09d38c69c72872e4c46ca88e943afc2649c54dd355d0"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/baseline_calibration.json",
+      "bytes": 92504,
+      "sha256": "f3cededfd58c35f89ea280a71e0ab7fe6b7a17a4555b538e445241356bcda64a"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/baseline_calibration.npz",
+      "bytes": 803286,
+      "sha256": "0f4b8177a8deec669cf0416729fcd5a807c0b8b99af024c48a62887753c4b788"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/baseline_metadata_audit.json",
+      "bytes": 5273,
+      "sha256": "135f1d9b86a7f4e461fdc61da5f3360d128e929a1d65c6e64460cf5e1317e9d1"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/baseline_signal_disagreement.json",
+      "bytes": 35754,
+      "sha256": "69e5b8c9d316bda3ac1228cac96d5365d67a4cfafe1b8ab6271e42df2a3d5900"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/baseline_signal_disagreement.npz",
+      "bytes": 1294914,
+      "sha256": "68cb598849fed0e78dee69e9601edec30718cad9d980586952989491cdb612b7"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/first_simulation.json",
+      "bytes": 9050,
+      "sha256": "1890648309fdcebe1fb1b2dd9fdeeed0f73ff0a1a93135216bcc348afda19c20"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/first_simulation.npz",
+      "bytes": 736634,
+      "sha256": "b1fbe44663e1840b56958d950babe1f12bd5c10eb18c79f1e61876431824a874"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/optimization_images.html",
+      "bytes": 237534,
+      "sha256": "c59d04ff4b190af1dfe1ab711d64d712af217dd2f19ba2b98ba8e9682d33296e"
+    },
+    {
+      "path": "MRzero_generations_08_09/results/mrzero09_20261109_181150_852771/optimization_images.npz",
+      "bytes": 1085518,
+      "sha256": "41799549e540ed8be3537c8f8df706adf6ffce91a18eb8a648488c70ce2172d2"
+    },
+    {
+      "path": "MRzero_generations_08_09/shim_export_timing.py",
+      "bytes": 9703,
+      "sha256": "84b9b697a1ef1a55caf2d494f4220c82327f1c462fc200c4c368afb5bbda32db"
+    },
+    {
+      "path": "MRzero_generations_08_09/signal_disagreement.py",
+      "bytes": 9113,
+      "sha256": "d85d0450ff2d6126500eadb7dfe070182b0edf66cfdc2fc9c88bae5245e2840b"
+    },
+    {
+      "path": "MRzero_generations_08_09/slice_geometry.py",
+      "bytes": 3251,
+      "sha256": "487b11155a0e5a728b66492c5b71bf99d7307b841deb8eb6baf49bf58d747e55"
+    },
+    {
+      "path": "MRzero_generations_08_09/subspin_sampling.py",
+      "bytes": 14257,
+      "sha256": "56bf6df3e38a8bbbb395f9e4ec870be64e48656e22ba994ffa678b5b99962ca2"
+    },
+    {
+      "path": "MRzero_generations_08_09/twin_geometry.py",
+      "bytes": 11055,
+      "sha256": "04d825cff67ea5c3f404a6cd0c14f8b162d0a453ed36bec52f8bde7138bddcf3"
+    },
+    {
+      "path": "MRzero_generations_08_09/twin_inputs.py",
+      "bytes": 34506,
+      "sha256": "6c57e03602362da889cd65b4a1a33adb93621079fcaaf7dc0a03d8ce3558f0a1"
+    },
+    {
+      "path": "MRzero_generations_08_09/voxel_3d.py",
+      "bytes": 19968,
+      "sha256": "6974db3a23f0677fe5ef92c47c63b31648cc9ddcafedcc649e527ed28b9311b4"
     },
     {
       "path": "MRzero_validation/01_audit_comparison_MRzero.ipynb",
@@ -1467,8 +2146,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 3274,
-      "sha256": "3b21de2d5e42e02d674fe34900bbcf11a3ea14eeef8a45888c6383ac4a8a7601"
+      "bytes": 3735,
+      "sha256": "c6e72befb952277d8aa8e2d41bbec153bd55dad952c1aaf13f319e4587162d08"
     },
     {
       "path": "acquisition_014/sequences/b0_map.seq",
@@ -2382,8 +3061,8 @@
     },
     {
       "path": "docs/PUBLISHING.md",
-      "bytes": 1632,
-      "sha256": "21137a7cd2cf598c1b054a6d5dbfa5f52fd1abe5b189f135c25f8404d5674872"
+      "bytes": 2094,
+      "sha256": "f7b675a3970904095df787b05e6b41698b66c080f690f54b326b06dbc4454a34"
     },
     {
       "path": "docs/SERVER_SETUP.md",
@@ -2477,8 +3156,11 @@
     },
     {
       "path": "scripts/export_source.py",
-      "bytes": 6691,
-      "sha256": "325a677149d77b4c9b5d9af365e62bca20bef5414376d0cbe7fefd885d1fb5d8"
+      "bytes": 8517,
+      "sha256": "2ae5f710d174b7201fa2385e95817d5dcccd3d4044c77f5468728238c392dcdc"
     }
+  ],
+  "complete_directories": [
+    "MRzero_generations_08_09"
   ]
 }

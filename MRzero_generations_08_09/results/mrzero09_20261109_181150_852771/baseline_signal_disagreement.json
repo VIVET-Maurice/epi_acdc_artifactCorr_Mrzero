@@ -1,0 +1,772 @@
+{
+  "comparison_policy": {
+    "primary_domain": "full FOV, including measured-dark pixels",
+    "secondary_domain": "fixed envelope from uncalibrated zero-B0 target; diagnostic only",
+    "envelope_threshold_fraction": 0.1,
+    "reference_scale": 9.842471627052873e-06,
+    "bright_fraction": 0.1,
+    "both_low_does_not_imply_agreement": true,
+    "gain_source": "calibration fit pixels only",
+    "point_comparison_gain": "same before-calibration gain as the uncalibrated finite-voxel model",
+    "object_target_field_and_optimization_loss_unchanged": true,
+    "independent_physical_validation": false
+  },
+  "models": {
+    "before_calibration": {
+      "full_FOV": {
+        "gain": 5.117102074851753,
+        "gain_fitted": false,
+        "reference_scale": 9.842471627052873e-06,
+        "reference_scale_source": "supplied fixed scale",
+        "bright_fraction": 0.1,
+        "brightness_threshold": 9.842471627052873e-07,
+        "full_FOV": {
+          "pixels": 16384,
+          "measured_energy": 6.006048469595584e-08,
+          "SSE": 1.2698836993252146e-08,
+          "normalized_SSE": 0.21143414105859223,
+          "NRMSE_percent": 45.98196832004827,
+          "overprediction_SSE": 1.7471325798354163e-09,
+          "underprediction_SSE": 1.095170441341673e-08,
+          "overprediction_normalized_SSE": 0.029089551785669476,
+          "underprediction_normalized_SSE": 0.18234458927292274,
+          "overprediction_fraction_of_SSE": 0.1375820936014692,
+          "underprediction_fraction_of_SSE": 0.8624179063985308,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 9863,
+          "both_low_SSE": 5.735360345021986e-10,
+          "both_low_fraction_of_SSE": 0.04516445362728584,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 498,
+              "measured_low_simulated_high_pixels": 10,
+              "simulated_low_measured_high_fraction": 0.0303955078125,
+              "measured_low_simulated_high_fraction": 0.0006103515625
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 1241,
+              "measured_low_simulated_high_pixels": 202,
+              "simulated_low_measured_high_fraction": 0.07574462890625,
+              "measured_low_simulated_high_fraction": 0.0123291015625
+            }
+          }
+        },
+        "analysis_mask": {
+          "pixels": 16384,
+          "measured_energy": 6.006048469595584e-08,
+          "SSE": 1.2698836993252146e-08,
+          "normalized_SSE": 0.21143414105859223,
+          "NRMSE_percent": 45.98196832004827,
+          "overprediction_SSE": 1.7471325798354163e-09,
+          "underprediction_SSE": 1.095170441341673e-08,
+          "overprediction_normalized_SSE": 0.029089551785669476,
+          "underprediction_normalized_SSE": 0.18234458927292274,
+          "overprediction_fraction_of_SSE": 0.1375820936014692,
+          "underprediction_fraction_of_SSE": 0.8624179063985308,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 9863,
+          "both_low_SSE": 5.735360345021986e-10,
+          "both_low_fraction_of_SSE": 0.04516445362728584,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 498,
+              "measured_low_simulated_high_pixels": 10,
+              "simulated_low_measured_high_fraction": 0.0303955078125,
+              "measured_low_simulated_high_fraction": 0.0006103515625
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 1241,
+              "measured_low_simulated_high_pixels": 202,
+              "simulated_low_measured_high_fraction": 0.07574462890625,
+              "measured_low_simulated_high_fraction": 0.0123291015625
+            }
+          }
+        },
+        "subsets": {
+          "fit": {
+            "pixels": 5544,
+            "measured_energy": 1.9698882969683634e-08,
+            "SSE": 4.838708427615148e-09,
+            "normalized_SSE": 0.24563364506819332,
+            "NRMSE_percent": 49.56144116833098,
+            "overprediction_SSE": 5.678562539317743e-10,
+            "underprediction_SSE": 4.2708521736833736e-09,
+            "overprediction_normalized_SSE": 0.028826825094889843,
+            "underprediction_normalized_SSE": 0.21680681997330348,
+            "overprediction_fraction_of_SSE": 0.11735698945837358,
+            "underprediction_fraction_of_SSE": 0.8826430105416264,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 3399,
+            "both_low_SSE": 1.927884373530878e-10,
+            "both_low_fraction_of_SSE": 0.039842954010789064,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 178,
+                "measured_low_simulated_high_pixels": 4,
+                "simulated_low_measured_high_fraction": 0.032106782106782104,
+                "measured_low_simulated_high_fraction": 0.0007215007215007215
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 460,
+                "measured_low_simulated_high_pixels": 76,
+                "simulated_low_measured_high_fraction": 0.08297258297258298,
+                "measured_low_simulated_high_fraction": 0.013708513708513708
+              }
+            }
+          },
+          "validation": {
+            "pixels": 1836,
+            "measured_energy": 4.546317402609158e-09,
+            "SSE": 7.498963526544813e-10,
+            "normalized_SSE": 0.16494588614163003,
+            "NRMSE_percent": 40.61353052144445,
+            "overprediction_SSE": 1.688254407430914e-10,
+            "underprediction_SSE": 5.810709119113899e-10,
+            "overprediction_normalized_SSE": 0.03713454776523115,
+            "underprediction_normalized_SSE": 0.12781133837639888,
+            "overprediction_fraction_of_SSE": 0.22513170006159322,
+            "underprediction_fraction_of_SSE": 0.7748682999384068,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 1189,
+            "both_low_SSE": 7.027712415690341e-11,
+            "both_low_fraction_of_SSE": 0.09371578339878121,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 32,
+                "measured_low_simulated_high_pixels": 1,
+                "simulated_low_measured_high_fraction": 0.017429193899782137,
+                "measured_low_simulated_high_fraction": 0.0005446623093681918
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 119,
+                "measured_low_simulated_high_pixels": 22,
+                "simulated_low_measured_high_fraction": 0.06481481481481481,
+                "measured_low_simulated_high_fraction": 0.011982570806100218
+              }
+            }
+          },
+          "test": {
+            "pixels": 1836,
+            "measured_energy": 7.43463668503224e-09,
+            "SSE": 9.42372911581458e-10,
+            "normalized_SSE": 0.1267543999128683,
+            "NRMSE_percent": 35.60258416363457,
+            "overprediction_SSE": 2.0060227371104549e-10,
+            "underprediction_SSE": 7.417706378704125e-10,
+            "overprediction_normalized_SSE": 0.02698212195290019,
+            "underprediction_normalized_SSE": 0.09977227795996811,
+            "overprediction_fraction_of_SSE": 0.21286931239821147,
+            "underprediction_fraction_of_SSE": 0.7871306876017886,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 1090,
+            "both_low_SSE": 6.75163834782952e-11,
+            "both_low_fraction_of_SSE": 0.07164508088946606,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 60,
+                "measured_low_simulated_high_pixels": 2,
+                "simulated_low_measured_high_fraction": 0.032679738562091505,
+                "measured_low_simulated_high_fraction": 0.0010893246187363835
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 136,
+                "measured_low_simulated_high_pixels": 18,
+                "simulated_low_measured_high_fraction": 0.07407407407407407,
+                "measured_low_simulated_high_fraction": 0.00980392156862745
+              }
+            }
+          }
+        },
+        "policy": {
+          "signed_residual": "scaled simulated magnitude minus measured magnitude",
+          "overprediction": "simulation brighter than measurement; includes measured dark/zero pixels",
+          "underprediction": "simulation darker than measurement; the previous one-sided hole count",
+          "full_FOV_is_primary": true,
+          "measured_zero_pixels_excluded": false,
+          "subset_masks_intersect_analysis_mask": true,
+          "array_masks_use_analysis_mask": true,
+          "both_low": "both magnitudes at or below the fixed brightness threshold",
+          "both_low_is_not_agreement": true,
+          "causal_interpretation": "Descriptive mismatch only; no physical cause or ground truth inferred.",
+          "reference_envelope": "Optional diagnostic region; not an independent ground-truth mask."
+        }
+      },
+      "fixed_envelope": {
+        "gain": 5.117102074851753,
+        "gain_fitted": false,
+        "reference_scale": 9.842471627052873e-06,
+        "reference_scale_source": "supplied fixed scale",
+        "bright_fraction": 0.1,
+        "brightness_threshold": 9.842471627052873e-07,
+        "full_FOV": {
+          "pixels": 16384,
+          "measured_energy": 6.006048469595584e-08,
+          "SSE": 1.2698836993252146e-08,
+          "normalized_SSE": 0.21143414105859223,
+          "NRMSE_percent": 45.98196832004827,
+          "overprediction_SSE": 1.7471325798354163e-09,
+          "underprediction_SSE": 1.095170441341673e-08,
+          "overprediction_normalized_SSE": 0.029089551785669476,
+          "underprediction_normalized_SSE": 0.18234458927292274,
+          "overprediction_fraction_of_SSE": 0.1375820936014692,
+          "underprediction_fraction_of_SSE": 0.8624179063985308,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 9863,
+          "both_low_SSE": 5.735360345021986e-10,
+          "both_low_fraction_of_SSE": 0.04516445362728584,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 498,
+              "measured_low_simulated_high_pixels": 10,
+              "simulated_low_measured_high_fraction": 0.0303955078125,
+              "measured_low_simulated_high_fraction": 0.0006103515625
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 1241,
+              "measured_low_simulated_high_pixels": 202,
+              "simulated_low_measured_high_fraction": 0.07574462890625,
+              "measured_low_simulated_high_fraction": 0.0123291015625
+            }
+          }
+        },
+        "analysis_mask": {
+          "pixels": 7121,
+          "measured_energy": 4.990007687375144e-08,
+          "SSE": 5.735216084174643e-09,
+          "normalized_SSE": 0.11493401300132056,
+          "NRMSE_percent": 33.9019192673985,
+          "overprediction_SSE": 1.4454666463703258e-09,
+          "underprediction_SSE": 4.2897494378043165e-09,
+          "overprediction_normalized_SSE": 0.02896722283669815,
+          "underprediction_normalized_SSE": 0.08596679016462239,
+          "overprediction_fraction_of_SSE": 0.2520335110579087,
+          "underprediction_fraction_of_SSE": 0.7479664889420912,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 1419,
+          "both_low_SSE": 1.4551837799009892e-10,
+          "both_low_fraction_of_SSE": 0.02537278035462905,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 198,
+              "measured_low_simulated_high_pixels": 9,
+              "simulated_low_measured_high_fraction": 0.02780508355568038,
+              "measured_low_simulated_high_fraction": 0.0012638674343491082
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 760,
+              "measured_low_simulated_high_pixels": 174,
+              "simulated_low_measured_high_fraction": 0.1067265833450358,
+              "measured_low_simulated_high_fraction": 0.024434770397416095
+            }
+          }
+        },
+        "subsets": {
+          "fit": {
+            "pixels": 2430,
+            "measured_energy": 1.5911845403268635e-08,
+            "SSE": 1.931030386246921e-09,
+            "normalized_SSE": 0.12135804096300772,
+            "NRMSE_percent": 34.83648101674561,
+            "overprediction_SSE": 5.048860715980866e-10,
+            "underprediction_SSE": 1.4261443146488342e-09,
+            "overprediction_normalized_SSE": 0.03173020217343063,
+            "underprediction_normalized_SSE": 0.08962783878957707,
+            "overprediction_fraction_of_SSE": 0.2614594131682021,
+            "underprediction_fraction_of_SSE": 0.7385405868317978,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 549,
+            "both_low_SSE": 5.558225885668262e-11,
+            "both_low_fraction_of_SSE": 0.028783730827100153,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 68,
+                "measured_low_simulated_high_pixels": 4,
+                "simulated_low_measured_high_fraction": 0.027983539094650206,
+                "measured_low_simulated_high_fraction": 0.0016460905349794238
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 300,
+                "measured_low_simulated_high_pixels": 69,
+                "simulated_low_measured_high_fraction": 0.12345679012345678,
+                "measured_low_simulated_high_fraction": 0.028395061728395062
+              }
+            }
+          },
+          "validation": {
+            "pixels": 766,
+            "measured_energy": 4.057409810446103e-09,
+            "SSE": 5.478327151749606e-10,
+            "normalized_SSE": 0.13502030624674013,
+            "NRMSE_percent": 36.745109368015235,
+            "overprediction_SSE": 1.3162879761683007e-10,
+            "underprediction_SSE": 4.1620391755813053e-10,
+            "overprediction_normalized_SSE": 0.032441583119837185,
+            "underprediction_normalized_SSE": 0.10257872312690294,
+            "overprediction_fraction_of_SSE": 0.24027188222008966,
+            "underprediction_fraction_of_SSE": 0.7597281177799102,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 184,
+            "both_low_SSE": 1.715335380756064e-11,
+            "both_low_fraction_of_SSE": 0.031311298745790306,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 22,
+                "measured_low_simulated_high_pixels": 1,
+                "simulated_low_measured_high_fraction": 0.028720626631853787,
+                "measured_low_simulated_high_fraction": 0.0013054830287206266
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 86,
+                "measured_low_simulated_high_pixels": 16,
+                "simulated_low_measured_high_fraction": 0.1122715404699739,
+                "measured_low_simulated_high_fraction": 0.020887728459530026
+              }
+            }
+          },
+          "test": {
+            "pixels": 780,
+            "measured_energy": 6.662397150663864e-09,
+            "SSE": 4.700999067397473e-10,
+            "normalized_SSE": 0.07056017468020574,
+            "NRMSE_percent": 26.563165225591195,
+            "overprediction_SSE": 1.2157008952902803e-10,
+            "underprediction_SSE": 3.485298172107192e-10,
+            "overprediction_normalized_SSE": 0.018247199435853862,
+            "underprediction_normalized_SSE": 0.05231297524435188,
+            "overprediction_fraction_of_SSE": 0.2586047939727217,
+            "underprediction_fraction_of_SSE": 0.7413952060272782,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 149,
+            "both_low_SSE": 1.5712172704759662e-11,
+            "both_low_fraction_of_SSE": 0.03342305003574081,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 18,
+                "measured_low_simulated_high_pixels": 1,
+                "simulated_low_measured_high_fraction": 0.023076923076923078,
+                "measured_low_simulated_high_fraction": 0.001282051282051282
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 69,
+                "measured_low_simulated_high_pixels": 13,
+                "simulated_low_measured_high_fraction": 0.08846153846153847,
+                "measured_low_simulated_high_fraction": 0.016666666666666666
+              }
+            }
+          }
+        },
+        "policy": {
+          "signed_residual": "scaled simulated magnitude minus measured magnitude",
+          "overprediction": "simulation brighter than measurement; includes measured dark/zero pixels",
+          "underprediction": "simulation darker than measurement; the previous one-sided hole count",
+          "full_FOV_is_primary": true,
+          "measured_zero_pixels_excluded": false,
+          "subset_masks_intersect_analysis_mask": true,
+          "array_masks_use_analysis_mask": true,
+          "both_low": "both magnitudes at or below the fixed brightness threshold",
+          "both_low_is_not_agreement": true,
+          "causal_interpretation": "Descriptive mismatch only; no physical cause or ground truth inferred.",
+          "reference_envelope": "Optional diagnostic region; not an independent ground-truth mask."
+        }
+      }
+    },
+    "after_calibration": {
+      "full_FOV": {
+        "gain": 5.117102074851753,
+        "gain_fitted": false,
+        "reference_scale": 9.842471627052873e-06,
+        "reference_scale_source": "supplied fixed scale",
+        "bright_fraction": 0.1,
+        "brightness_threshold": 9.842471627052873e-07,
+        "full_FOV": {
+          "pixels": 16384,
+          "measured_energy": 6.006048469595584e-08,
+          "SSE": 1.2698836993252146e-08,
+          "normalized_SSE": 0.21143414105859223,
+          "NRMSE_percent": 45.98196832004827,
+          "overprediction_SSE": 1.7471325798354163e-09,
+          "underprediction_SSE": 1.095170441341673e-08,
+          "overprediction_normalized_SSE": 0.029089551785669476,
+          "underprediction_normalized_SSE": 0.18234458927292274,
+          "overprediction_fraction_of_SSE": 0.1375820936014692,
+          "underprediction_fraction_of_SSE": 0.8624179063985308,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 9863,
+          "both_low_SSE": 5.735360345021986e-10,
+          "both_low_fraction_of_SSE": 0.04516445362728584,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 498,
+              "measured_low_simulated_high_pixels": 10,
+              "simulated_low_measured_high_fraction": 0.0303955078125,
+              "measured_low_simulated_high_fraction": 0.0006103515625
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 1241,
+              "measured_low_simulated_high_pixels": 202,
+              "simulated_low_measured_high_fraction": 0.07574462890625,
+              "measured_low_simulated_high_fraction": 0.0123291015625
+            }
+          }
+        },
+        "analysis_mask": {
+          "pixels": 16384,
+          "measured_energy": 6.006048469595584e-08,
+          "SSE": 1.2698836993252146e-08,
+          "normalized_SSE": 0.21143414105859223,
+          "NRMSE_percent": 45.98196832004827,
+          "overprediction_SSE": 1.7471325798354163e-09,
+          "underprediction_SSE": 1.095170441341673e-08,
+          "overprediction_normalized_SSE": 0.029089551785669476,
+          "underprediction_normalized_SSE": 0.18234458927292274,
+          "overprediction_fraction_of_SSE": 0.1375820936014692,
+          "underprediction_fraction_of_SSE": 0.8624179063985308,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 9863,
+          "both_low_SSE": 5.735360345021986e-10,
+          "both_low_fraction_of_SSE": 0.04516445362728584,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 498,
+              "measured_low_simulated_high_pixels": 10,
+              "simulated_low_measured_high_fraction": 0.0303955078125,
+              "measured_low_simulated_high_fraction": 0.0006103515625
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 1241,
+              "measured_low_simulated_high_pixels": 202,
+              "simulated_low_measured_high_fraction": 0.07574462890625,
+              "measured_low_simulated_high_fraction": 0.0123291015625
+            }
+          }
+        },
+        "subsets": {
+          "fit": {
+            "pixels": 5544,
+            "measured_energy": 1.9698882969683634e-08,
+            "SSE": 4.838708427615148e-09,
+            "normalized_SSE": 0.24563364506819332,
+            "NRMSE_percent": 49.56144116833098,
+            "overprediction_SSE": 5.678562539317743e-10,
+            "underprediction_SSE": 4.2708521736833736e-09,
+            "overprediction_normalized_SSE": 0.028826825094889843,
+            "underprediction_normalized_SSE": 0.21680681997330348,
+            "overprediction_fraction_of_SSE": 0.11735698945837358,
+            "underprediction_fraction_of_SSE": 0.8826430105416264,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 3399,
+            "both_low_SSE": 1.927884373530878e-10,
+            "both_low_fraction_of_SSE": 0.039842954010789064,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 178,
+                "measured_low_simulated_high_pixels": 4,
+                "simulated_low_measured_high_fraction": 0.032106782106782104,
+                "measured_low_simulated_high_fraction": 0.0007215007215007215
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 460,
+                "measured_low_simulated_high_pixels": 76,
+                "simulated_low_measured_high_fraction": 0.08297258297258298,
+                "measured_low_simulated_high_fraction": 0.013708513708513708
+              }
+            }
+          },
+          "validation": {
+            "pixels": 1836,
+            "measured_energy": 4.546317402609158e-09,
+            "SSE": 7.498963526544813e-10,
+            "normalized_SSE": 0.16494588614163003,
+            "NRMSE_percent": 40.61353052144445,
+            "overprediction_SSE": 1.688254407430914e-10,
+            "underprediction_SSE": 5.810709119113899e-10,
+            "overprediction_normalized_SSE": 0.03713454776523115,
+            "underprediction_normalized_SSE": 0.12781133837639888,
+            "overprediction_fraction_of_SSE": 0.22513170006159322,
+            "underprediction_fraction_of_SSE": 0.7748682999384068,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 1189,
+            "both_low_SSE": 7.027712415690341e-11,
+            "both_low_fraction_of_SSE": 0.09371578339878121,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 32,
+                "measured_low_simulated_high_pixels": 1,
+                "simulated_low_measured_high_fraction": 0.017429193899782137,
+                "measured_low_simulated_high_fraction": 0.0005446623093681918
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 119,
+                "measured_low_simulated_high_pixels": 22,
+                "simulated_low_measured_high_fraction": 0.06481481481481481,
+                "measured_low_simulated_high_fraction": 0.011982570806100218
+              }
+            }
+          },
+          "test": {
+            "pixels": 1836,
+            "measured_energy": 7.43463668503224e-09,
+            "SSE": 9.42372911581458e-10,
+            "normalized_SSE": 0.1267543999128683,
+            "NRMSE_percent": 35.60258416363457,
+            "overprediction_SSE": 2.0060227371104549e-10,
+            "underprediction_SSE": 7.417706378704125e-10,
+            "overprediction_normalized_SSE": 0.02698212195290019,
+            "underprediction_normalized_SSE": 0.09977227795996811,
+            "overprediction_fraction_of_SSE": 0.21286931239821147,
+            "underprediction_fraction_of_SSE": 0.7871306876017886,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 1090,
+            "both_low_SSE": 6.75163834782952e-11,
+            "both_low_fraction_of_SSE": 0.07164508088946606,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 60,
+                "measured_low_simulated_high_pixels": 2,
+                "simulated_low_measured_high_fraction": 0.032679738562091505,
+                "measured_low_simulated_high_fraction": 0.0010893246187363835
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 136,
+                "measured_low_simulated_high_pixels": 18,
+                "simulated_low_measured_high_fraction": 0.07407407407407407,
+                "measured_low_simulated_high_fraction": 0.00980392156862745
+              }
+            }
+          }
+        },
+        "policy": {
+          "signed_residual": "scaled simulated magnitude minus measured magnitude",
+          "overprediction": "simulation brighter than measurement; includes measured dark/zero pixels",
+          "underprediction": "simulation darker than measurement; the previous one-sided hole count",
+          "full_FOV_is_primary": true,
+          "measured_zero_pixels_excluded": false,
+          "subset_masks_intersect_analysis_mask": true,
+          "array_masks_use_analysis_mask": true,
+          "both_low": "both magnitudes at or below the fixed brightness threshold",
+          "both_low_is_not_agreement": true,
+          "causal_interpretation": "Descriptive mismatch only; no physical cause or ground truth inferred.",
+          "reference_envelope": "Optional diagnostic region; not an independent ground-truth mask."
+        }
+      },
+      "fixed_envelope": {
+        "gain": 5.117102074851753,
+        "gain_fitted": false,
+        "reference_scale": 9.842471627052873e-06,
+        "reference_scale_source": "supplied fixed scale",
+        "bright_fraction": 0.1,
+        "brightness_threshold": 9.842471627052873e-07,
+        "full_FOV": {
+          "pixels": 16384,
+          "measured_energy": 6.006048469595584e-08,
+          "SSE": 1.2698836993252146e-08,
+          "normalized_SSE": 0.21143414105859223,
+          "NRMSE_percent": 45.98196832004827,
+          "overprediction_SSE": 1.7471325798354163e-09,
+          "underprediction_SSE": 1.095170441341673e-08,
+          "overprediction_normalized_SSE": 0.029089551785669476,
+          "underprediction_normalized_SSE": 0.18234458927292274,
+          "overprediction_fraction_of_SSE": 0.1375820936014692,
+          "underprediction_fraction_of_SSE": 0.8624179063985308,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 9863,
+          "both_low_SSE": 5.735360345021986e-10,
+          "both_low_fraction_of_SSE": 0.04516445362728584,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 498,
+              "measured_low_simulated_high_pixels": 10,
+              "simulated_low_measured_high_fraction": 0.0303955078125,
+              "measured_low_simulated_high_fraction": 0.0006103515625
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 1241,
+              "measured_low_simulated_high_pixels": 202,
+              "simulated_low_measured_high_fraction": 0.07574462890625,
+              "measured_low_simulated_high_fraction": 0.0123291015625
+            }
+          }
+        },
+        "analysis_mask": {
+          "pixels": 7121,
+          "measured_energy": 4.990007687375144e-08,
+          "SSE": 5.735216084174643e-09,
+          "normalized_SSE": 0.11493401300132056,
+          "NRMSE_percent": 33.9019192673985,
+          "overprediction_SSE": 1.4454666463703258e-09,
+          "underprediction_SSE": 4.2897494378043165e-09,
+          "overprediction_normalized_SSE": 0.02896722283669815,
+          "underprediction_normalized_SSE": 0.08596679016462239,
+          "overprediction_fraction_of_SSE": 0.2520335110579087,
+          "underprediction_fraction_of_SSE": 0.7479664889420912,
+          "measured_zero_pixels": 0,
+          "both_low_pixels": 1419,
+          "both_low_SSE": 1.4551837799009892e-10,
+          "both_low_fraction_of_SSE": 0.02537278035462905,
+          "ratios": {
+            "25": {
+              "ratio": 0.25,
+              "simulated_low_measured_high_pixels": 198,
+              "measured_low_simulated_high_pixels": 9,
+              "simulated_low_measured_high_fraction": 0.02780508355568038,
+              "measured_low_simulated_high_fraction": 0.0012638674343491082
+            },
+            "50": {
+              "ratio": 0.5,
+              "simulated_low_measured_high_pixels": 760,
+              "measured_low_simulated_high_pixels": 174,
+              "simulated_low_measured_high_fraction": 0.1067265833450358,
+              "measured_low_simulated_high_fraction": 0.024434770397416095
+            }
+          }
+        },
+        "subsets": {
+          "fit": {
+            "pixels": 2430,
+            "measured_energy": 1.5911845403268635e-08,
+            "SSE": 1.931030386246921e-09,
+            "normalized_SSE": 0.12135804096300772,
+            "NRMSE_percent": 34.83648101674561,
+            "overprediction_SSE": 5.048860715980866e-10,
+            "underprediction_SSE": 1.4261443146488342e-09,
+            "overprediction_normalized_SSE": 0.03173020217343063,
+            "underprediction_normalized_SSE": 0.08962783878957707,
+            "overprediction_fraction_of_SSE": 0.2614594131682021,
+            "underprediction_fraction_of_SSE": 0.7385405868317978,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 549,
+            "both_low_SSE": 5.558225885668262e-11,
+            "both_low_fraction_of_SSE": 0.028783730827100153,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 68,
+                "measured_low_simulated_high_pixels": 4,
+                "simulated_low_measured_high_fraction": 0.027983539094650206,
+                "measured_low_simulated_high_fraction": 0.0016460905349794238
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 300,
+                "measured_low_simulated_high_pixels": 69,
+                "simulated_low_measured_high_fraction": 0.12345679012345678,
+                "measured_low_simulated_high_fraction": 0.028395061728395062
+              }
+            }
+          },
+          "validation": {
+            "pixels": 766,
+            "measured_energy": 4.057409810446103e-09,
+            "SSE": 5.478327151749606e-10,
+            "normalized_SSE": 0.13502030624674013,
+            "NRMSE_percent": 36.745109368015235,
+            "overprediction_SSE": 1.3162879761683007e-10,
+            "underprediction_SSE": 4.1620391755813053e-10,
+            "overprediction_normalized_SSE": 0.032441583119837185,
+            "underprediction_normalized_SSE": 0.10257872312690294,
+            "overprediction_fraction_of_SSE": 0.24027188222008966,
+            "underprediction_fraction_of_SSE": 0.7597281177799102,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 184,
+            "both_low_SSE": 1.715335380756064e-11,
+            "both_low_fraction_of_SSE": 0.031311298745790306,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 22,
+                "measured_low_simulated_high_pixels": 1,
+                "simulated_low_measured_high_fraction": 0.028720626631853787,
+                "measured_low_simulated_high_fraction": 0.0013054830287206266
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 86,
+                "measured_low_simulated_high_pixels": 16,
+                "simulated_low_measured_high_fraction": 0.1122715404699739,
+                "measured_low_simulated_high_fraction": 0.020887728459530026
+              }
+            }
+          },
+          "test": {
+            "pixels": 780,
+            "measured_energy": 6.662397150663864e-09,
+            "SSE": 4.700999067397473e-10,
+            "normalized_SSE": 0.07056017468020574,
+            "NRMSE_percent": 26.563165225591195,
+            "overprediction_SSE": 1.2157008952902803e-10,
+            "underprediction_SSE": 3.485298172107192e-10,
+            "overprediction_normalized_SSE": 0.018247199435853862,
+            "underprediction_normalized_SSE": 0.05231297524435188,
+            "overprediction_fraction_of_SSE": 0.2586047939727217,
+            "underprediction_fraction_of_SSE": 0.7413952060272782,
+            "measured_zero_pixels": 0,
+            "both_low_pixels": 149,
+            "both_low_SSE": 1.5712172704759662e-11,
+            "both_low_fraction_of_SSE": 0.03342305003574081,
+            "ratios": {
+              "25": {
+                "ratio": 0.25,
+                "simulated_low_measured_high_pixels": 18,
+                "measured_low_simulated_high_pixels": 1,
+                "simulated_low_measured_high_fraction": 0.023076923076923078,
+                "measured_low_simulated_high_fraction": 0.001282051282051282
+              },
+              "50": {
+                "ratio": 0.5,
+                "simulated_low_measured_high_pixels": 69,
+                "measured_low_simulated_high_pixels": 13,
+                "simulated_low_measured_high_fraction": 0.08846153846153847,
+                "measured_low_simulated_high_fraction": 0.016666666666666666
+              }
+            }
+          }
+        },
+        "policy": {
+          "signed_residual": "scaled simulated magnitude minus measured magnitude",
+          "overprediction": "simulation brighter than measurement; includes measured dark/zero pixels",
+          "underprediction": "simulation darker than measurement; the previous one-sided hole count",
+          "full_FOV_is_primary": true,
+          "measured_zero_pixels_excluded": false,
+          "subset_masks_intersect_analysis_mask": true,
+          "array_masks_use_analysis_mask": true,
+          "both_low": "both magnitudes at or below the fixed brightness threshold",
+          "both_low_is_not_agreement": true,
+          "causal_interpretation": "Descriptive mismatch only; no physical cause or ground truth inferred.",
+          "reference_envelope": "Optional diagnostic region; not an independent ground-truth mask."
+        }
+      }
+    }
+  }
+}

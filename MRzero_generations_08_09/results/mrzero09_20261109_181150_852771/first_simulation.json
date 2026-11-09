@@ -1,0 +1,305 @@
+{
+  "generation": "09",
+  "stage": "first zero-current B0-enabled baseline, before EPI nuisance calibration",
+  "native_parameters": {
+    "PD": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 2.5160775862786977e-07,
+      "median": 2.7303708520776127e-06,
+      "max": 9.972511179512367e-06,
+      "mean": 2.8618530905077932e-06,
+      "std": 1.3011442661081674e-06
+    },
+    "B0": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": -87.10891723632812,
+      "median": -12.346016883850098,
+      "max": 250.7572479248047,
+      "mean": -2.077677011489868,
+      "std": 37.782569885253906
+    },
+    "T1": {
+      "count": 7785,
+      "finite_count": 0,
+      "positive_infinity_count": 7785,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": null,
+      "median": null,
+      "max": null,
+      "mean": null,
+      "std": null
+    },
+    "T2": {
+      "count": 7785,
+      "finite_count": 7703,
+      "positive_infinity_count": 82,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 0.0056899008341133595,
+      "median": 0.041121792048215866,
+      "max": 20.11321449279785,
+      "mean": 0.04994305595755577,
+      "std": 0.2830575406551361
+    },
+    "T2dash": {
+      "count": 7785,
+      "finite_count": 0,
+      "positive_infinity_count": 7785,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": null,
+      "median": null,
+      "max": null,
+      "mean": null,
+      "std": null
+    },
+    "D": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0,
+      "mean": 0.0,
+      "std": 0.0
+    },
+    "B1": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 1.0,
+      "median": 1.0,
+      "max": 1.0,
+      "mean": 1.0,
+      "std": 0.0
+    },
+    "R2_sInv": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 0.0,
+      "median": 24.194425582885742,
+      "max": 175.74998474121094,
+      "mean": 30.161273956298828,
+      "std": 18.46558952331543
+    },
+    "amplitude_at_reference": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 2.399314666945429e-07,
+      "median": 2.5553786144882906e-06,
+      "max": 7.97370284999488e-06,
+      "mean": 2.6869436169363325e-06,
+      "std": 1.2175440815553884e-06
+    }
+  },
+  "native_parameter_statistics_order": "finite minimum / median / maximum over active simulated voxels; infinite counts reported separately",
+  "amplitude_interpretation": "effective transverse amplitude at explicit measured echo time",
+  "PD_interpretation": "effective amplitude extrapolated to RF; not a measured proton-density map",
+  "amplitude_reference_time_s": 0.002123,
+  "native_RF": {
+    "flip_angle_deg": 90.0,
+    "phase_rad": 1.5707963267948966,
+    "selective": false,
+    "model": "one independent nonselective ideal 90-degree excitation; stationary object; D=0",
+    "RF_history_count": 1,
+    "steady_state_simulated": false,
+    "slice_profile_simulated": false
+  },
+  "timing": {
+    "ADC_time_since_RF_min_s": 0.0046925,
+    "ADC_time_since_RF_max_s": 0.1170875000000003,
+    "model_TE_s": 0.0613275,
+    "sequence_TE_s": 0.0613275,
+    "sequence_TR_s": 0.11935,
+    "native_TR_policy": "independent RF histories; sequence TR is hardware timing, not a simulated GRE steady state",
+    "sequence_dwell_s": 5e-06,
+    "sequence_echo_spacing_s": 0.0008800000000000023
+  },
+  "geometry": {
+    "native_object_matrix_yx": [
+      128,
+      128
+    ],
+    "retained_parent_voxels": 7785,
+    "active_MRzero_voxels": 7785,
+    "z_samples_per_parent": 1,
+    "native_voxel_size_m": [
+      0.0015624999999999944,
+      0.0015624999999999944,
+      0.005
+    ],
+    "native_voxel_shape": "box",
+    "object_FOV_m": [
+      0.2,
+      0.2
+    ],
+    "sequence_matrix_xy": [
+      128,
+      128
+    ],
+    "sequence_FOV_m": [
+      0.2000000000000068,
+      0.1999999999999875
+    ],
+    "slice_thickness_mm": 5.0
+  },
+  "dephasing": {
+    "native_policy": "native CustomVoxelPhantom voxel_shape=box on three local trajectories",
+    "external_voxel_dephasing": false,
+    "external_xyz": null,
+    "unresolved_coherence": {
+      "enabled": true,
+      "spatial_assignment": "unresolved; independent of ACDC",
+      "applied_once": true,
+      "implementation": "MRzero native box/Gaussian kernels inside local PDG executor",
+      "device_cache_policy": "no signal cache; native kernel evaluated at each execution"
+    },
+    "B0_map_mode": "regularized",
+    "B0_regularization": {
+      "method": "Fixed known in-plane B0 gradients and refined center B0 from complex multi-echo fit; no second smoothing.",
+      "gradient_source": "fit.multi_echo.known_inplane_gradient_Hz_per_pixel",
+      "weighting_source": "echo_power",
+      "weighting_echo_count": 6,
+      "weighting_uses_EPI": false,
+      "requested_B0_mode": "regularized"
+    },
+    "B0_gradient_policy": "measured in-plane slopes; unknown through-plane B0 slope is zero; calibrated ACDC slopes in all three axes",
+    "measured_B0_Hz": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": -86.15118397651517,
+      "median": -12.65876475951393,
+      "max": 251.8449546158397,
+      "mean": -3.1071601002799016,
+      "std": 37.693489464738285
+    },
+    "used_B0_Hz": {
+      "count": 7785,
+      "finite_count": 7785,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": -87.10891430545121,
+      "median": -12.3460171190383,
+      "max": 250.7572533495367,
+      "mean": -2.077678126478627,
+      "std": 37.78256622806367
+    }
+  },
+  "execution": {
+    "device": "cuda",
+    "model_dtype": "torch.float32",
+    "native_precision": "float32",
+    "MRzero_version": "1.2.0",
+    "graph_options": {
+      "max_state_count": 16,
+      "min_state_mag": 0.0,
+      "min_emitted_signal": 0.0,
+      "min_latent_signal": 0.0
+    },
+    "native_blocks_simulated": 8,
+    "native_simulation_seconds": 1.8208739449619316,
+    "first_native_simulation": {
+      "B0_enabled": true,
+      "ADC_samples": 4096,
+      "stage": "first B0-enabled uncalibrated baseline block",
+      "zero_currents": true,
+      "voxel_size_m": [
+        0.0015624999999999944,
+        0.0015624999999999944,
+        0.005
+      ],
+      "voxel_shape": "box",
+      "b0_event_min_Hz": -87.10891723632812,
+      "b0_event_max_Hz": 250.7572479248047,
+      "b0_center_min_Hz": -87.10891723632812,
+      "b0_center_max_Hz": 250.7572479248047,
+      "resummation": {
+        "relative_error": 2.3630779147880693e-06,
+        "mass_relative_error": 6.633225516461118e-09,
+        "max_tolerance_ratio": 0.030058164226331282
+      },
+      "model": "local native PDG executor; event total B0 and native three-axis box kernel"
+    }
+  },
+  "actual_scan": {
+    "TE_s": 0.061328,
+    "TR_s": 0.11935,
+    "header_flip_deg": 15.0,
+    "dwell_s": 5e-06,
+    "image_shape": [
+      128,
+      128
+    ],
+    "FOV_m": [
+      0.2,
+      0.2
+    ],
+    "slice_thickness_mm": 5.0,
+    "receiver_count": 32,
+    "navigator_count": 3
+  },
+  "measured_tissue_maps": "B0 and multi-echo effective amplitude/relaxation; no measured T1, B1 or diffusion map",
+  "baseline_kdata": {
+    "shape": [
+      128,
+      128
+    ],
+    "count": 16384,
+    "finite_count": 16384,
+    "all_finite": true,
+    "magnitude": {
+      "count": 16384,
+      "finite_count": 16384,
+      "positive_infinity_count": 0,
+      "negative_infinity_count": 0,
+      "NaN_count": 0,
+      "min": 7.61892096079464e-08,
+      "median": 1.5264917237800546e-05,
+      "max": 0.00040179528878070414,
+      "mean": 2.6610328859533183e-05,
+      "std": 3.270691377110779e-05
+    }
+  },
+  "baseline_vs_scan_magnitude": {
+    "gain": 5.161569118499756,
+    "gain_fitted": true,
+    "requested_pixels": 16384,
+    "used_pixels": 16384,
+    "excluded_nonfinite_pixels": 0,
+    "RMSE": 8.802618367553805e-07,
+    "NRMSE_percent": 45.97560109559576,
+    "edge_gradient_NRMSE_percent": 75.225830078125,
+    "gradient_coordinates": "pixels",
+    "edge_pixels": 16384,
+    "contour_Dice": 0.7497440397835308,
+    "contour_reference_peak_fraction": 0.2,
+    "contour_shared_threshold": 1.968494416360045e-06,
+    "nonrigid_registration_applied": false,
+    "centroid_distance_mm": null,
+    "centroid_RMS_mm": null
+  },
+  "comparison_gain_policy": "positive least-squares gain fitted for reporting only; no spatial registration"
+}

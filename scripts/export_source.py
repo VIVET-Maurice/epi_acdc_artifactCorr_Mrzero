@@ -1,7 +1,9 @@
-"""Export code/notebooks for GitHub without raw data or saved image outputs.
+"""Export portable sources and explicitly complete directories for GitHub.
 
 The destination is a separate checkout. Existing destination files are never
 removed, and local executed notebooks are never edited by this exporter.
+Complete directories retain every regular file byte for byte, including results,
+caches, and notebook outputs; the other sources keep the portable export policy.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import nbformat
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE_DIRS = ("Experiment", "MRzero_validation", "Mrzero_simulation", "docs", "scripts", "eval_other_subj")
+COMPLETE_DIRECTORIES = ("MRzero_generations_08_09",)
 SUFFIXES = {".py", ".m", ".md", ".ipynb", ".sh", ".ps1", ".yml", ".yaml", ".toml"}
 SKIP_DIRS = {"__pycache__", ".git", "tmp", "pipeline_validation", "simulation_metadata", ".ipynb_checkpoints"}
 
@@ -39,6 +42,12 @@ def source_files():
     for path in sorted(ROOT.glob("acquisition_*/sequences/*.seq")):
         if path.is_file():
             yield path
+    for name in COMPLETE_DIRECTORIES:
+        directory = ROOT / name
+        if directory.is_dir():
+            for path in directory.rglob("*"):
+                if path.is_file() and not path.is_symlink():
+                    yield path
 
 
 def portable_notebook(path):
@@ -83,11 +92,26 @@ def export(destination):
     # A destination inside tmp/ is convenient for the first publication.
     destination.mkdir(parents=True, exist_ok=True)
     files, notebooks = [], {}
+    complete_directories = set()
+    raw_acquisitions_included = False
+    calibrations_included = False
+    saved_notebook_outputs_included = False
     for source in sorted(set(source_files())):
         relative = source.relative_to(ROOT)
+        complete_directory = next((name for name in COMPLETE_DIRECTORIES
+                                   if relative.is_relative_to(name)), None)
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        if source.suffix == ".ipynb":
+        if complete_directory is not None:
+            complete_directories.add(complete_directory)
+            content = source.read_bytes()
+            if source.suffix == ".ipynb":
+                notebook = nbformat.read(source, as_version=4)
+                nbformat.validate(notebook)
+                notebooks[relative.as_posix()] = ["complete directory preserved byte for byte"]
+                saved_notebook_outputs_included |= any(
+                    cell.get("outputs") for cell in notebook.cells if cell.cell_type == "code")
+        elif source.suffix == ".ipynb":
             content, changes = portable_notebook(source)
             notebooks[relative.as_posix()] = changes
         elif relative.as_posix() in {"MRzero_validation/build_experiment_notebook.py", "Mrzero_simulation/build_synthetic_notebooks.py"}:
@@ -100,15 +124,22 @@ def export(destination):
             content = text.encode("utf-8")
         else:
             content = source.read_bytes()
-        if source.suffix != ".seq":
+        if complete_directory is None and source.suffix != ".seq":
             # Match Git's LF checkout so manifest hashes also work on Linux.
             content = content.removeprefix(b"\xef\xbb\xbf").replace(b"\r\n", b"\n")
         target.write_bytes(content)
         files.append({"path": relative.as_posix(), "bytes": len(content),
                       "sha256": hashlib.sha256(content).hexdigest()})
-    manifest = {"scope": "Code, notebooks without saved outputs, and Pulseq sequence files",
-                "raw_acquisitions_included": False, "calibrations_included": False,
-                "saved_notebook_outputs_included": False,
+        raw_acquisitions_included |= source.suffix.lower() in {".dat", ".dcm", ".ima"}
+        calibrations_included |= (
+            "calibration" in source.stem.lower()
+            and source.suffix.lower() in {".npz", ".npy", ".mat", ".h5", ".hdf5"})
+    manifest = {"scope": "Portable sources, notebooks without saved outputs, and Pulseq sequence files; "
+                         "complete directories retain every regular file byte for byte",
+                "complete_directories": sorted(complete_directories),
+                "raw_acquisitions_included": raw_acquisitions_included,
+                "calibrations_included": calibrations_included,
+                "saved_notebook_outputs_included": saved_notebook_outputs_included,
                 "notebook_count": len(notebooks), "file_count": len(files),
                 "notebook_export_adjustments": notebooks, "files": files}
     (destination / "publication_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")

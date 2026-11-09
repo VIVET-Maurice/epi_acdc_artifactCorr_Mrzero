@@ -44,3 +44,11 @@ __pycache__/
 /logs/
 .DS_Store
 Thumbs.db
+
+# Publish the complete generations 08/09 directory, including results and caches.
+!/MRzero_generations_08_09/**
+/MRzero_generations_08_09/**/.env
+/MRzero_generations_08_09/**/.env.*
+!/MRzero_generations_08_09/**/.env.example
+/MRzero_generations_08_09/**/*.pem
+/MRzero_generations_08_09/**/*.key

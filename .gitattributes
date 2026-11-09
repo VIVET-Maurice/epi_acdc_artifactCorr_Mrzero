@@ -7,3 +7,6 @@
 *.m text eol=lf
 *.sh text eol=lf
 *.txt text eol=lf
+
+# Preserve the complete generations 08/09 snapshot byte for byte.
+MRzero_generations_08_09/** -text
