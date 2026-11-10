@@ -18,16 +18,20 @@ not a completed scientific deliverable.
   GRE, numerical agreement between 08 and 09, and measured ACDC ON/OFF validation
   are separate questions. Their targets, gains, masks and units are recorded
   separately; an implementation-parity result does not validate the scanner model.
-- The reconstruction control uses **one identical complex Gen08 k-space array**
-  for automatic actual-coordinate reconstruction, an explicit Fourier adjoint,
-  the current 08 V2 matrix inverse, and a forced nominal-grid IFFT diagnostic.
-  Ordinary IFFT and direct inverse Fourier summation must agree on an exactly
-  Cartesian grid; a separate synthetic control checks this.
+- Slide 8 directly compares a **true centered nominal-grid IFFT with the current
+  08 V2 matrix inverse**, using one identical complex Gen08 k-space array, the
+  same image grid/frame and the full field of view. Both use the single reporting
+  gain fitted from the existing Gen08 automatic baseline. The IFFT deliberately
+  assigns samples to centered Cartesian bins; the matrix inverse uses the
+  unrounded Pulseq-calculated coordinates at those same ADC centers. A synthetic
+  exactly Cartesian control checks that IFFT and the matrix inverse agree.
 - **Current 08 V2 is an SVD-based matrix least-squares inverse**, with a matched
   Hermitian adjoint for optimization. It is not the same operator as the
-  separately evaluated normalized direct Fourier-adjoint sum. Both are labeled
-  explicitly. The current EPI source is read as it exists today, rather than
-  assuming that the 9 November source archive is unchanged.
+  separately evaluated normalized direct Fourier-adjoint sum. Automatic versus
+  direct-adjoint controls remain supplementary. The current EPI source is read
+  as it exists today, rather than assuming that the 9 November source archive
+  is unchanged. Downstream 08/09 comparisons retain their matched production
+  automatic reconstruction to isolate the forward implementation.
 - The coordinates and ADC center timestamps are **calculated from the supplied
   Pulseq sequence and validated against Twix acquisition metadata**. They are
   not a measured field-probe trajectory. The tests address numerical/grid
@@ -121,22 +125,31 @@ This OFF comparison alone does not test through-slice ACDC compensation.
 
 | Controlled experiment | Fresh result | Scope |
 | --- | ---: | --- |
+| Slide 8: true nominal-grid IFFT versus current 08 V2 matrix inverse | `2.477960e-4` complex relative L2; `1.009839e-9%` magnitude NRMSE | Identical complex Gen08 k-space, grid/frame, full FOV and fixed Gen08 reporting gain; matrix image is the error reference |
+| Slide 8: IFFT / matrix OFF NRMSE | `45.975605397004%` / `45.975605396991%` | Same measured EPI OFF and shared gain; no independent gain fitting |
+| Exactly Cartesian IFFT versus matrix inverse sanity check | `2.012388e-15` complex relative L2 | Asymmetric 16×16 synthetic complex image; fixed seed 20261111 |
 | 08 versus 09 complex signal, zero currents | `1.270856e-7` relative L2 | All ADC samples, identical object and reconstruction |
 | 08 versus 09 complex signal, deterministic nonzero currents | `6.358020e-6` relative L2 | Diagnostic currents, not an optimization |
-| Automatic versus actual-coordinate direct adjoint | `4.101085e-15` complex relative L2 | Exactly the same Gen08 complex k-space |
-| Current 08 V2 matrix inverse versus automatic reconstruction | `1.837110e-12` complex relative L2 | Same complex k-space, grid and scale; inverse is a distinct operator |
-| Exactly Cartesian FFT versus direct adjoint sanity check | `1.360613e-15` complex relative L2 | Asymmetric 16×16 synthetic complex image; fixed seed 20261111 |
-| Forced nominal-grid IFFT versus actual-coordinate direct adjoint | `2.477960e-4` complex relative L2; `1.009062e-9%` magnitude NRMSE | Phase-sensitive difference; negligible magnitude change on this supplied trajectory |
+| Supplementary: automatic versus actual-coordinate direct adjoint | `4.101085e-15` complex relative L2 | Exactly the same Gen08 complex k-space |
+| Supplementary: current 08 V2 matrix inverse versus automatic reconstruction | `1.837110e-12` complex relative L2 | Same complex k-space, grid and scale; inverse is a distinct operator |
+| Supplementary: exactly Cartesian IFFT versus direct adjoint | `1.360613e-15` complex relative L2 | Same asymmetric synthetic control |
+| Supplementary: nominal-grid IFFT versus automatic reconstruction | `2.477960e-4` complex relative L2; `1.009062e-9%` magnitude NRMSE | Same complex k-space; distinct from the primary IFFT/matrix comparison |
 | Uniform phantom, B0=0 interior CV | `0.112859%` | 4,783 pixels after three default-connectivity erosions |
 | Same uniform phantom, measured-B0 interior CV | `36.430482%` | Same fixed mask and B0=0-derived normalization |
 | Hypothetical 5 μs rectangular aperture | `9.327796%` magnitude-image change from center sampling | Zero ACDC; five-node quadrature; not an identified scanner filter |
 | Three- versus five-node aperture convergence | `1.705295e-5` complex relative L2 | Center analytic oracle versus native MRzero error: `7.713830e-6` |
 
-The computational automatic/direct explanation is not supported for these
-arrays: their reconstructed images agree numerically. Physical scanner
-trajectory errors remain untested. The controlled B0 and aperture results
-show sensitivity within their stated models, not the cause of the measured
-intensity pattern. Receiver-sensitive EPI remains unimplemented and untested.
+The primary IFFT/matrix comparison has a small phase-sensitive complex
+difference and negligible magnitude-image change on this supplied trajectory.
+The maximum absolute phase difference is `5.654869e-4 rad` on 14,043 pixels
+above 0.1% of the matrix-image peak. Both yield **45.975605%** OFF NRMSE when
+rounded to six decimal places, so this control does not support reconstruction
+choice as the cause of the magnitude pattern in these arrays. Supplementary
+automatic/direct images also agree numerically.
+Physical scanner trajectory errors remain untested. The controlled B0 and
+aperture results show sensitivity within their stated models, not the cause
+of the measured intensity pattern. Receiver-sensitive EPI remains unimplemented
+and untested.
 These masks differ from the archived 4,941-pixel pattern mask; the CV values
 are not interchangeable with anatomical-image CV or OFF-model NRMSE.
 
@@ -205,7 +218,9 @@ repetitions are in `data/runtime_benchmarks.json` and `.csv`. A separate
 same-k-space reconstruction timing gives **3.14661 s** for actual-coordinate
 direct adjoint and **0.000126653 s** for forced nominal-grid IFFT. Those are
 reconstruction-only comparators, not production 08 V2 runtime or a claim that
-an IFFT evaluates nonuniform samples exactly.
+an IFFT evaluates nonuniform samples exactly. The slide 8 IFFT/matrix comparison
+reuses the recorded numerical signal and does not rerun or relabel these
+benchmarks.
 
 ## Build and visually verify the PowerPoint
 
@@ -238,7 +253,7 @@ Inspect every `rendered/slide-*.png`, the rendered PDF and `contact_sheet.png`.
 out-of-bounds objects, but does not replace visual/scientific inspection.
 The final visual inspection status is recorded in `rendered/visual_audit.md`.
 The figure-generation notebook has been executed top to bottom in the scientific
-environment: all 12 code cells completed in 55.2 s using the validated numerical
+environment: all 12 code cells completed in 57.3 s using the validated numerical
 caches. That cache-based execution time is not a simulation benchmark.
 
 ## Changes to the retained slides
@@ -256,7 +271,7 @@ restored. The main discussion remains approximately 30 minutes.
 | 5 | Provide the large editable voxel → one ADC → all samples → EPI flow; link RF-relative time, integrated actual currents, local q, three-sinc factor, voxel sum and reconstruction equations. Every voxel contributes at every ADC. |
 | 6 | Correct what 08 caches; show effective PD and once-only unresolved coherence. Fitted receiver amplitudes are not silently described as EPI receive-sensitive simulation. |
 | 7 | Derive the 3D normalized-coordinate box integral with genuine LaTeX, an editable voxel, q units and the measured/unmeasured B0-versus-calibrated-ACDC slope distinction. |
-| 8 | Insert matched same-k-space reconstructions and a Cartesian sanity control; distinguish the direct Fourier adjoint, existing automatic method and current V2 matrix inverse. Conclusions apply to the supplied Pulseq trajectory. |
+| 8 | Replace the primary automatic/direct comparison with true centered nominal-grid IFFT versus the current 08 V2 matrix inverse on identical complex k-space, grid/frame, full-FOV mask and fixed Gen08 reporting gain. Add an exact-Cartesian IFFT/matrix sanity control; retain automatic/direct tests as supplementary. Conclusions apply to the supplied Pulseq trajectory. |
 | 9 | Preserve the 08/09 implementation comparison; show modified local `native_pdg.execute_graph`, effective event B0/local voxel trajectories and autograd. Equivalent outputs do not establish new physical accuracy. |
 | 10 | Replace figure slots/stale numbers with matched GRE, measured EPI OFF, fresh simulated OFF and residual images, with common axes/scales and stated mask/gain/stage/timing. |
 | 11 | Show freshly calculated complex per-ADC/image differences and measured setup-versus-repeated-operation timings for 08/08V2/09; keep computational parity separate from scanner agreement. |
@@ -264,6 +279,11 @@ restored. The main discussion remains approximately 30 minutes.
 | 13, backup | Retain coordinate/convention checks; add Pulseq-calculated k/timestamp plots and genuine Fourier-sign equations, preserving data/time reversal and origin/frame conventions. |
 | 14, backup | Update assumptions after the receiver audit; distinguish transmit B1+ from reception, normal-B0 assumptions and effective relaxation. Receiver-sensitive EPI/RSS equations are clearly planned, not implemented here. |
 | 15, backup | Replace README-only provenance with exact data/code hashes, executed preparation cells, notebook/figure paths and limitations; retain the 15-slide selection and consistent counters. |
+
+The subsequent reconstruction-comparison revision changes only slide 8 and
+figure text that refers to its primary control. It does not change forward
+physics, production 08/08V2/09 operators, downstream matched 08/09 comparisons,
+or the previously measured runtime benchmarks.
 
 ## Data and code provenance
 
@@ -293,5 +313,5 @@ slide assignments, sources and hashes. Current-run conclusions should be taken
 from those artifacts, not copied from an older presentation or README.
 
 Independent recomputation from the exported NPZ arrays and raw timing samples
-passed all 56 checks in `scientific_audit.json`. `artifact_verification.json`
+passed all 64 checks in `scientific_audit.json`. `artifact_verification.json`
 records final notebook, deck, notes, embedded-figure hashes and render consistency.

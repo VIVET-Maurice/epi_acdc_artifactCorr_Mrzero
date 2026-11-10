@@ -814,18 +814,18 @@
     },
     {
       "path": "MRzero_generations_08_09/presentation/00_generate_weekly_figures.ipynb",
-      "bytes": 22540,
-      "sha256": "d25cafb563c5da63825e6e664e35dab5c800a2e968068749affee0adb7112e18"
+      "bytes": 24716,
+      "sha256": "f98f69586a1ca424fcbc24780641e58b908f6042941a36726baa29d284dbac02"
     },
     {
       "path": "MRzero_generations_08_09/presentation/README.md",
-      "bytes": 20888,
-      "sha256": "3ad162f90c6def00376f4ff802b7b4403c5cc228167ef388cee5ca7ffb40687e"
+      "bytes": 22709,
+      "sha256": "1d304ec66cdf911739808f852055bd4acf05507bb67d55b079f31018fcf4249b"
     },
     {
       "path": "MRzero_generations_08_09/presentation/build_presentation.py",
-      "bytes": 50820,
-      "sha256": "564c383284331317bffc0b85652e05bbb82948b159d3d770d96fa942a7db2c36"
+      "bytes": 52112,
+      "sha256": "feeb25a649cd3fbbf16e299f6f83ffc4cd6cc0998995c0cfc56d7ce1c85638b6"
     },
     {
       "path": "MRzero_generations_08_09/presentation/controlled_experiments.py",
@@ -834,13 +834,13 @@
     },
     {
       "path": "MRzero_generations_08_09/presentation/export_slide_data.py",
-      "bytes": 8260,
-      "sha256": "6569c95ace95029343480ac77ef1841600a6d392b1fc0af5f92bd65843c9dc51"
+      "bytes": 8202,
+      "sha256": "fe33b0470152f43584b1d6fcd64b52c32fcad5887cd37b7410bdb807a30645ce"
     },
     {
       "path": "MRzero_generations_08_09/presentation/generate_figures.py",
-      "bytes": 39216,
-      "sha256": "f964faa5fb34ef92284d5d0e2d784a7c3721153d9401c02dd5ffec05d7b860ee"
+      "bytes": 45404,
+      "sha256": "420783fbefa83c8a7491aeb1076226bea5060e705992e2e7d6377bc858dfff53"
     },
     {
       "path": "MRzero_generations_08_09/presentation/prepare_data.py",

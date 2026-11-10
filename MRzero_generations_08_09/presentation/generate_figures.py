@@ -87,13 +87,28 @@ def reconstruction_controls(context,signal,measured):
     with reconstruction_mode():auto=FrameReconstruction(acq,'cpu',torch.float64,frame_matrix=O,sample_chunk=256)
     with reconstruction_mode(direct=True):direct=FrameReconstruction(acq,'cpu',torch.float64,frame_matrix=O,sample_chunk=256)
     with reconstruction_mode():matrix=FrameDFTReconstruction(acq,'cpu',torch.float64,frame_matrix=O,sample_chunk=256)
+    if matrix.report['regularization']!=0:
+        raise ValueError('The slide 8 inverse comparison requires the production unregularized matrix solve (lambda=0).')
     native=rotate_acquisition_k(acq,matrix=np.asarray(O).T)
     ny,nx=auto.image_size;fx,fy=np.asarray(native['FOV_m'])
     kx,ky=np.meshgrid((np.arange(nx)-nx//2)/fx,(np.arange(ny)-ny//2)/fy)
     ideal=rotate_acquisition_k(dict(native,kx_mInv=kx,ky_mInv=ky),matrix=O)
     with reconstruction_mode():grid=FrameReconstruction(ideal,'cpu',torch.float64,frame_matrix=O)
+    # Deliberately use a genuine centered IFFT, without an actual-k offset
+    # correction. Geometry is checked separately against the nominal-grid
+    # operator; neither the signal nor its stored readout/phase ordering changes.
+    if not np.all(np.asarray(acq.get('density_compensation_weights',1.))==np.asarray(acq.get('density_compensation_weights',1.)).flat[0]):
+        raise ValueError('The IFFT control requires uniform sample weights.')
+    tensor=torch.as_tensor(signal,dtype=torch.complex128)
+    ifft=torch.fft.fftshift(torch.fft.ifft2(torch.fft.ifftshift(tensor,dim=(-2,-1))),dim=(-2,-1)).numpy()
     reconstructed={name:operator.numpy_image(signal) for name,operator in
-        [('auto',auto),('direct_actual_k',direct),('production_08V2_matrix',matrix),('forced_grid_ifft',grid)]}
+        [('auto',auto),('direct_actual_k',direct),('production_08V2_matrix',matrix)]}
+    reconstructed['forced_grid_ifft']=ifft
+    grid_check=relative(ifft,grid.numpy_image(signal))
+    if grid_check>1e-13:raise AssertionError('Centered IFFT and the nominal-grid geometry disagree.')
+    for candidate in (matrix,grid):
+        np.testing.assert_allclose(candidate.X_m,auto.X_m,rtol=0,atol=1e-14)
+        np.testing.assert_allclose(candidate.Y_m,auto.Y_m,rtol=0,atol=1e-14)
     mask=np.ones((ny,nx),bool)
     primary=compare_magnitude(measured,reconstructed['auto'],mask)
     gain=primary['gain'];rows=[]
@@ -114,18 +129,45 @@ def reconstruction_controls(context,signal,measured):
     synthetic_signal=(A@known.ravel()).reshape(n,n)
     with reconstruction_mode():fft=fourier.ContinuousReconstruction(synthetic,'cpu',torch.float64)
     with reconstruction_mode(direct=True):idft=fourier.ContinuousReconstruction(synthetic,'cpu',torch.float64)
+    with reconstruction_mode():synthetic_matrix=FrameDFTReconstruction(synthetic,'cpu',torch.float64,frame_matrix=np.eye(2))
+    if synthetic_matrix.report['regularization']!=0:
+        raise AssertionError('Exact Cartesian IFFT equivalence requires lambda=0.')
     sfft,sidft=fft.numpy_image(synthetic_signal),idft.numpy_image(synthetic_signal)
+    smatrix=synthetic_matrix.numpy_image(synthetic_signal)
     sanity={'size':[n,n],'seed':20261111,'FFT_vs_direct_relative_L2':relative(sfft,sidft),
-            'FFT_vs_known_relative_L2':relative(sfft,known),'direct_vs_known_relative_L2':relative(sidft,known)}
+            'FFT_vs_known_relative_L2':relative(sfft,known),'direct_vs_known_relative_L2':relative(sidft,known),
+            'Cartesian_IFFT_vs_matrix_relative_L2':relative(sfft,smatrix),'matrix_vs_known_relative_L2':relative(smatrix,known)}
+    matrix_image=reconstructed['production_08V2_matrix']
+    complex_residual=matrix_image-ifft
+    magnitude_residual=np.abs(matrix_image)-np.abs(ifft)
+    phase_mask=np.abs(matrix_image)>1e-3*np.abs(matrix_image).max()
+    phase=np.full(matrix_image.shape,np.nan)
+    phase[phase_mask]=np.angle(matrix_image[phase_mask]*ifft[phase_mask].conj())
+    primary_pair=dict(complex_relative_image_error=relative(ifft,matrix_image),
+        magnitude_difference_NRMSE_percent=100*relative(np.abs(ifft),np.abs(matrix_image)),
+        IFFT_OFF_NRMSE_percent=compare_magnitude(measured,ifft,mask,gain=gain)['NRMSE_percent'],
+        matrix_OFF_NRMSE_percent=compare_magnitude(measured,matrix_image,mask,gain=gain)['NRMSE_percent'],
+        Cartesian_IFFT_vs_matrix_relative_L2=sanity['Cartesian_IFFT_vs_matrix_relative_L2'],
+        nominal_grid_IFFT_geometry_check_relative_L2=grid_check,
+        phase_mask_threshold_fraction_of_matrix_peak=1e-3,
+        phase_mask_pixels=int(phase_mask.sum()),maximum_absolute_phase_difference_rad=float(np.nanmax(abs(phase))),
+        comparison='True centered IFFT versus production 08 V2 DFT-matrix inverse (lambda=0); same complex signal.',
+        relative_error_reference='matrix-inverse image',
+        OFF_reporting_gain_source='Fixed least-squares magnitude gain from the existing Gen08 automatic baseline; shared by both reconstructions.',
+        IFFT_coordinate_assumption='Centered nominal Cartesian bins; Pulseq k offsets are deliberately ignored.',
+        matrix_coordinates='Unrounded Pulseq-calculated coordinates at the same ADC centers; not an independently measured trajectory.')
     np.savez_compressed(HERE/'data/reconstruction_controls.npz',kdata=signal,measured_off=measured,
         **reconstructed,X_m=auto.X_m,Y_m=auto.Y_m,mask=mask,shared_gain=gain,pattern_mask=pattern_mask,
-        synthetic_known=known,synthetic_kdata=synthetic_signal,synthetic_fft=sfft,synthetic_direct=sidft)
+        synthetic_known=known,synthetic_kdata=synthetic_signal,synthetic_fft=sfft,synthetic_direct=sidft,synthetic_matrix=smatrix,
+        IFFT_matrix_complex_residual=complex_residual,IFFT_matrix_magnitude_residual=magnitude_residual,
+        IFFT_matrix_phase_difference_rad=phase,IFFT_matrix_phase_mask=phase_mask)
     result={'rows':rows,'shared_OFF_gain':gain,'primary_mask':'full EPI FOV, all finite pixels',
-        'mask_pixels':int(mask.sum()),'sanity':sanity,
+        'mask_pixels':int(mask.sum()),'sanity':sanity,'ifft_vs_matrix':primary_pair,
         'pattern_metric_mask':'Retained parent support eroded three iterations with scipy default connectivity; same fixed mask for all reconstructions. Object structure is not removed by these metrics.',
         'operators':{'auto':auto.report,'direct_actual_k':direct.report,
-                     'production_08V2_matrix':matrix.report,'forced_grid_ifft':grid.report},
-        'interpretation':'Automatic actual-coordinate and direct-adjoint comparison uses EXACTLY the same complex k-space. Production 08V2 is the current matrix inverse, a distinct operator. Forced nominal-grid IFFT is a separate diagnostic.'}
+                     'production_08V2_matrix':matrix.report,'forced_grid_ifft':dict(grid.report,
+                        method='torch.fft.ifft2',offset_phase_applied=False,nominal_grid_geometry_check_relative_L2=grid_check)},
+        'interpretation':'Slide 8 directly compares a true nominal-grid IFFT with the current 08V2 matrix inverse on EXACTLY the same complex k-space. Automatic versus direct-adjoint reconstruction is retained as a supplementary implementation control.'}
     (HERE/'data/reconstruction_controls.json').write_text(json.dumps(safe(result),indent=2))
     return result,reconstructed,auto
 
@@ -166,19 +208,42 @@ def main_figures(context,registry):
         mask='OFF NRMSE full FOV; GRE missing coverage shown blank',OFF_gain=g,EPI_to_GRE_gain=exp_gain,
         NRMSE_percent=off['NRMSE_percent'],GRE_coverage_pixels=int(cover.sum()),all_grayscale_limits=[0,vmax])
     # Main reconstruction test: no new forward simulation or per-image gain fit.
-    fig,axes=plt.subplots(1,4,figsize=(13,3.05),layout='constrained')
-    delta=g*(np.abs(images['direct_actual_k'])-np.abs(images['auto']))/scale
+    fig,axes=plt.subplots(1,4,figsize=(13,3.05),layout='constrained',sharey=True)
+    ifft_image,matrix_image=images['forced_grid_ifft'],images['production_08V2_matrix']
+    complex_delta=g*np.abs(matrix_image-ifft_image)/scale
+    magnitude_delta=g*np.abs(np.abs(matrix_image)-np.abs(ifft_image))/scale
     vmax=max(float(g*np.abs(images[name]).max()/scale) for name in
-             ('auto','direct_actual_k','production_08V2_matrix'))
-    dmax=max(float(np.abs(delta).max()),1e-16)
-    for ax,a,title,signed in zip(axes,[g*np.abs(images['auto'])/scale,g*np.abs(images['direct_actual_k'])/scale,
-        g*np.abs(images['production_08V2_matrix'])/scale,delta],
-        ['08 automatic\n'+comparisons['operators']['auto']['method'],
-         'Pulseq-k direct\nadjoint IDFT','Current 08 V2:\nmatrix inverse','Direct − automatic\nmagnitude'],[False,False,False,True]):
-        im=image(ax,a,X,Y,title,vmin=-dmax if signed else 0,vmax=dmax if signed else vmax,cmap='RdBu_r' if signed else 'gray')
-        fig.colorbar(im,ax=ax,label='Magnitude / OFF peak' if not signed else 'Difference / OFF peak',shrink=.7)
-    registry.save(fig,'slide08_reconstruction_control',[8], 'Same complex k-space; automatic actual-k, direct adjoint, and current matrix inverse.',
-        mask='full FOV',gain=g,comparisons=comparisons['rows'],synthetic_sanity=comparisons['sanity'])
+             ('forced_grid_ifft','production_08V2_matrix'))
+    for index,(ax,a,title) in enumerate(zip(axes,
+        [g*np.abs(ifft_image)/scale,g*np.abs(matrix_image)/scale,complex_delta,magnitude_delta],
+        ['IFFT\nnominal Cartesian grid','08 V2 matrix inverse\nPulseq ADC coordinates',
+         'Absolute complex\ndifference','Absolute magnitude\ndifference'])):
+        difference=index>=2
+        im=image(ax,a,X,Y,title,vmax=max(float(a.max()),1e-18) if difference else vmax,
+                 cmap='viridis' if difference else 'gray')
+        if index:ax.set_ylabel('')
+        cb=fig.colorbar(im,ax=ax,label='Difference / OFF peak' if difference else 'Magnitude / OFF peak',shrink=.7)
+        cb.formatter.set_useMathText(True)
+        if difference:cb.formatter.set_powerlimits((0,0))
+        cb.update_ticks()
+    registry.save(fig,'slide08_reconstruction_control',[8], 'Identical complex k-space: true centered IFFT versus current 08 V2 matrix inverse, with absolute complex and magnitude residuals.',
+        mask='full FOV',gain=g,normalization='one fixed Gen08 gain and one measured OFF peak',
+        comparisons=comparisons['ifft_vs_matrix'],synthetic_sanity=comparisons['sanity'],
+        difference_direction='matrix minus IFFT before taking absolute values',
+        grayscale_limits=[0,vmax],difference_limits='separately labeled absolute scales; no thresholding/smoothing')
+    # Keep the previous automatic/direct implementation check available in the
+    # notebook, rather than relabeling an actual-coordinate adjoint as IFFT.
+    fig,axes=plt.subplots(1,3,figsize=(11,3.05),layout='constrained')
+    supplemental=[g*np.abs(images['auto'])/scale,g*np.abs(images['direct_actual_k'])/scale,
+                  g*np.abs(images['direct_actual_k']-images['auto'])/scale]
+    common_max=max(float(a.max()) for a in supplemental[:2])
+    for index,(ax,a,title) in enumerate(zip(axes,supplemental,
+        ['Supplement: 08 automatic\nPulseq coordinates','Supplement: direct adjoint\nPulseq coordinates','Absolute complex\ndifference'])):
+        im=image(ax,a,X,Y,title,vmax=common_max if index<2 else max(float(a.max()),1e-18),
+                 cmap='gray' if index<2 else 'viridis')
+        fig.colorbar(im,ax=ax,label='Magnitude / OFF peak' if index<2 else 'Difference / OFF peak',shrink=.7)
+    registry.save(fig,'reconstruction_auto_vs_direct',[], 'Supplementary actual-coordinate automatic/direct-adjoint numerical control; not the IFFT-versus-matrix slide comparison.',
+        gain=g,comparisons=comparisons['rows'])
     fig,axes=plt.subplots(1,4,figsize=(13,3.05),layout='constrained')
     matched=[('Measured EPI\nOFF',measured/scale),('08 automatic\nrow-separable',g*np.abs(baseline)/scale),
              ('08 V2\nmatrix inverse',g*np.abs(images['production_08V2_matrix'])/scale),
@@ -204,6 +269,10 @@ def main_figures(context,registry):
             registry.number('reconstruction',row['operator'],key,row[key],'%' if 'percent' in key else 'relative L2',mask_pixels=mask.size,gain=g)
     registry.number('scanner_fidelity','fresh08_uncalibrated','OFF_NRMSE_percent',off['NRMSE_percent'],'%',mask_pixels=mask.size,gain=g)
     registry.number('reconstruction','exact_cartesian_sanity','FFT_vs_direct_relative_L2',comparisons['sanity']['FFT_vs_direct_relative_L2'],'relative L2')
+    for key in ('complex_relative_image_error','magnitude_difference_NRMSE_percent',
+                'IFFT_OFF_NRMSE_percent','matrix_OFF_NRMSE_percent','Cartesian_IFFT_vs_matrix_relative_L2'):
+        registry.number('IFFT_vs_matrix','same_complex_kspace',key,comparisons['ifft_vs_matrix'][key],
+                        '%' if 'percent' in key else 'relative L2',mask_pixels=mask.size,gain=g)
     return {'off':off,'reconstruction':comparisons,'GRE_target_report':target['report'],
         'GRE_coverage_pixels':int(cover.sum()),'OFF_mask_pixels':mask.size,'comparison_stage':'before EPI nuisance calibration; no image registration'},X,Y
 
@@ -222,6 +291,12 @@ def geometry_figures(context,registry):
     for row in (0,1,64,65,126,127):axes[1].plot(np.arange(nx),(t[row]-rf[row])*1000,label=f'row {row}')
     axes[1].set(xlabel='Stored readout index',ylabel='Time after RF [ms]',title='Odd/even reversal retains ADC time');axes[1].legend(fontsize=7,ncol=2)
     axes[2].plot(np.arange(ny),np.max(actual_error,axis=1));axes[2].set(xlabel='Stored phase row',ylabel='Maximum coordinate error [cycles/m]',title='Pulseq versus forced Cartesian grid')
+    # Show the absolute grid mismatch, rather than magnifying 1e-10 roundoff
+    # around a nearly constant 9e-4 offset with Matplotlib's additive offset.
+    axes[2].set_ylim(0,1.15*max(float(actual_error.max()),np.finfo(float).eps))
+    axes[2].ticklabel_format(axis='y',style='sci',scilimits=(0,0),useOffset=False,useMathText=True)
+    axes[2].annotate(f'Maximum: {actual_error.max():.3g} cycles/m',xy=(.03,.08),
+                     xycoords='axes fraction',fontsize=9)
     report={'ADC_samples':t.size,'ADC_elapsed_min_ms':float((t-rf).min()*1000),'ADC_elapsed_max_ms':float((t-rf).max()*1000),
         'sequence_TE_ms':acq['TE_s']*1000,'sequence_TR_ms':acq['TR_s']*1000,'dwell_us':acq['dwell_s']*1e6,
         'max_actual_minus_nominal_k_mInv':float(actual_error.max()),'row_time_directions':np.unique(row_polarity).tolist(),

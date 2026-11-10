@@ -34,9 +34,8 @@ def export_slide_data(folder=HERE):
     uniform=summary['uniform_phantom']
     scan=summary['scan_metadata']
     echoes=summary['echo_times_s']
-    rows={row['operator']:row for row in reconstruction['rows']}
-    direct=rows['direct_actual_k']
-    error=direct['complex_relative_image_error']
+    pair=reconstruction['ifft_vs_matrix']
+    error=pair['complex_relative_image_error']
     off_nrmse=off['NRMSE_percent']
     if abs(off['gain']-reconstruction['shared_OFF_gain'])>1e-10*max(1.,abs(off['gain'])):
         raise AssertionError('OFF and matched-reconstruction reporting gains differ.')
@@ -86,11 +85,12 @@ def export_slide_data(folder=HERE):
             matrix_label=f"{nx} × {ny} pixels",sample_label=f"{count:,} samples"),
         'receiver':dict(receiver,slide_summary=receiver_summary,physical_receive_IDs=physical_ids),
         'reconstruction':dict(reconstruction,
-            title=("Pulseq-coordinate reconstruction leaves the intensity pattern unchanged" if error<1e-10 else
-                   "The matched actual-coordinate reconstruction test reveals a difference"),
+            title="IFFT versus 08 V2 matrix inverse on the same complex k-space",
             complex_relative_error=error,
-            magnitude_nrmse_percent=direct['magnitude_difference_NRMSE_percent'],
-            synthetic_relative_error=reconstruction['sanity']['FFT_vs_direct_relative_L2']),
+            magnitude_nrmse_percent=pair['magnitude_difference_NRMSE_percent'],
+            IFFT_OFF_NRMSE_percent=pair['IFFT_OFF_NRMSE_percent'],
+            matrix_OFF_NRMSE_percent=pair['matrix_OFF_NRMSE_percent'],
+            synthetic_relative_error=pair['Cartesian_IFFT_vs_matrix_relative_L2']),
         'equivalence':dict(equivalence,
             title=f"08 and 09 agree within {max_error*1e6:.2g} ppm in the tested cases",
             max_signal_relative_error=max_error,
