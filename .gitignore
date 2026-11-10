@@ -45,10 +45,12 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Publish the complete generations 08/09 directory, including results and caches.
-!/MRzero_generations_08_09/**
-/MRzero_generations_08_09/**/.env
-/MRzero_generations_08_09/**/.env.*
-!/MRzero_generations_08_09/**/.env.example
-/MRzero_generations_08_09/**/*.pem
-/MRzero_generations_08_09/**/*.key
+# Generated presentation assets are rebuilt from the published sources.
+/MRzero_generations_08_09/presentation/cache/
+/MRzero_generations_08_09/presentation/data/
+/MRzero_generations_08_09/presentation/figures/
+/MRzero_generations_08_09/presentation/equations/
+/MRzero_generations_08_09/presentation/rendered/
+/MRzero_generations_08_09/presentation/source_render/
+/MRzero_generations_08_09/*.pptx
+/MRzero_generations_08_09/*.zip

@@ -1,0 +1,6 @@
+# Presentation assembly only. Scientific dependencies are documented separately.
+python-pptx==1.0.2
+Pillow>=9.0
+lxml>=4.9
+# Also required on PATH: pdflatex, pdftocairo, pdftoppm, pdfinfo,
+# LibreOffice and xvfb-run (for local headless slide rendering).

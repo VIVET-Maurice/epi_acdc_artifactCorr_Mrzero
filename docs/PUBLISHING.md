@@ -32,16 +32,17 @@ n'efface aucun fichier du checkout : une suppression volontaire de source doit
 être reportée explicitement dans celui-ci. Les notebooks exécutés locaux ne
 sont pas modifiés par l'export.
 
-Exception : `MRzero_generations_08_09/` est publié intégralement à la demande
-de son auteur, avec ses notebooks, modules, licences, résultats et caches Python.
-L'exporteur conserve tous les octets de ce dossier, y compris les fichiers
-binaires et l'état des notebooks. Les règles Git de ce dossier permettent cet
-export complet ; les identifiants et clés locales restent exclus.
+`MRzero_generations_08_09/` suit la même politique : seuls les sources,
+notebooks nettoyés, dépendances et licences sont publiés. Les résultats,
+caches, archives, présentations compilées et figures générées restent locaux.
+Les sources de génération de la présentation sont conservées ; leur guide
+décrit les données externes nécessaires pour les reproduire.
 
 Le manifeste `publication_manifest.json` indique les fichiers publiés, leurs
-SHA-256, les notebooks publiés et leurs adaptations de portabilité. Le manifeste
-identifie aussi les dossiers publiés intégralement. En dehors de cette exception,
-les scans, calibrations et résultats ne sont pas copiés.
+SHA-256, les notebooks publiés et leurs adaptations de portabilité. Les scans,
+calibrations et résultats ne sont pas copiés. Les anciens fichiers générés déjà
+suivis par Git doivent être retirés du checkout de publication lors de la revue ;
+les originaux locaux sont conservés.
 
 Sur le serveur, faire `git pull` après avoir conservé ses modifications et
 résultats locaux. Les sorties exécutées des notebooks sont des modifications

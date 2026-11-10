@@ -1,7 +1,7 @@
 """Inputs and controlled object variants for the measured-EPI validation notebook.
 
 No raw scan is edited. The simulation domain depends on object/B0 coverage,
-not on an ACDC optimisation ROI or availability of coil calibration maps.
+not on an ACDC optimization ROI or availability of coil calibration maps.
 """
 from pathlib import Path
 from copy import deepcopy

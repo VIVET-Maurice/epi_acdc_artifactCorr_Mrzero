@@ -1,115 +1,206 @@
-# Générations 08 et 09
+# Generations 08 and 09
 
-Ces trois notebooks reprennent la configuration **active** de
-`MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV3.ipynb` : acquisition
-`acquisition_029_(06)`, 32 échos MEGRE, alignement 90°, repère commun 90°,
-sortie 9 désactivée, réponse matérielle et cible GRE mesurée.
+These three notebooks use the **active** configuration of
+`MRzero_validation/06_acdc_echo32_b0_s0_t2star_MRzeroV3.ipynb`: acquisition
+`acquisition_029_(06)`, 32 MEGRE echoes, 90° alignment, a 90° common frame,
+disabled output 9, the hardware response, and the measured GRE target.
 
-| Notebook | Déphasage dans le voxel | ACDC | Reconstruction |
+| Notebook | Intravoxel dephasing | ACDC | Reconstruction |
 | --- | --- | --- | --- |
-| `08_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Intégrale analytique x/y/z, un centre MRzero par voxel | Phase intégrée après MRzero, comme 06 | Opérateur existant : IFFT ou sommes selon la trajectoire |
-| `08_V2_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Identique à 08 | Identique à 08 | Sommes DFT explicites, sans accélération FFT/IFFT |
-| `09_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Taille physique et noyaux de voxel MRzero dans le simulateur | Historique B0 total dans le simulateur ; PDG recalculé à chaque évaluation | Même opérateur que 08 |
+| `08_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Analytic x/y/z integral, one MRzero center per voxel | Integrated phase applied after MRzero, as in 06 | Existing operator: IFFT or Fourier sums, depending on the trajectory |
+| `08_V2_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Same as 08 | Same as 08 | DFT encoding matrix, SVD least-squares inverse, optional Tikhonov; no FFT/IFFT |
+| `09_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Physical voxel dimensions and native MRzero voxel kernels inside the simulator | Total B0 history inside the simulator; PDG recomputed at each evaluation | Same operator as 08 |
 
-## Utilisation
+## Installation and required data
 
-Ouvrir un notebook dans ce dossier et redémarrer le noyau avant de changer de
-génération. Modifier les chemins et paramètres en tête, puis exécuter les cellules
-dans l'ordre. Les acquisitions et `data/ACDC_3T.npz` restent dans le dossier parent.
-Les fonctions nécessaires sont copiées ici pour isoler cette génération des anciens
-notebooks ; seuls les modules de fonctionnement importés sont inclus, sans anciens
-notebooks, tests ou scripts de génération.
+Use a separate Python 3.11 environment for these generations. Their native
+executor uses **MRzeroCore 1.2.0 and PyTorch 2.8.0**; the older root requirements
+pin a different MRzeroCore version. From the repository root:
 
-Les paramètres GPU et les exports locaux de 06 sont conservés. Pour une exécution
-CPU : `GPU_REQUIRED=False`, `GPU_PROFILE="cpu"`. Pour examiner les diagnostics sans
-optimisation : `RUN_OPTIMIZATION=False`. Les exports de champ restent indépendants ;
-leurs trois interrupteurs `EXPORT_*WAVEFORM*` sont explicités dans les paramètres.
-Les résultats propres à chaque lancement sont dans `results/mrzero08_*`,
-`results/mrzero08_V2_*` ou `results/mrzero09_*`. Les CSV restent dans
-`INPUT_DIR/waveform`, comme dans 06.
+```bash
+python3.11 -m venv .venv-generations
+source .venv-generations/bin/activate
+# Install the PyTorch 2.8.0 CPU/CUDA build appropriate for this device first.
+python -m pip install -r MRzero_generations_08_09/requirements.txt
+python -m pip check
+python -m ipykernel install --user --name acdc-generations --display-name "Python (ACDC generations)"
+```
 
-## Ce qui change
+Select this kernel when opening a notebook. An installed CUDA build such as
+`torch==2.8.0+cu128` satisfies the requirement and is preserved. Install the
+generation requirements independently of `requirements-server.txt` and the
+older `MRzero_validation/requirements*.txt` files.
 
-- **Un voxel dans l'épaisseur entière**, avec poids 1. Il n'y a plus huit sous-coupes.
-- Les variations ACDC sur la largeur complète des trois axes et les huit coins
-  proviennent de la calibration 3D, dans la géométrie de coupe mesurée. Un voxel
-  sans couverture complète est exclu, sans renormaliser le signal restant.
-- Le B0 mesuré étant 2D, sa dérivée normale est inconnue et supposée nulle. La
-  dispersion résiduelle des 32 échos reste sans direction spatiale identifiée.
-- 08 multiplie les trois intégrales sinc une fois et différentie les trois facteurs
-  pendant l'optimisation. La cohérence résiduelle de 06 est conservée une seule fois.
-- V2 calcule directement `sum(signal * exp(+2πi k·r))/N_ADC`. Le signe positif
-  conserve la convention inverse/adjoint et l'orientation de 06. Le drapeau local
-  `continuous_reconstruction.FORCE_DIRECT_DFT` impose les mêmes sommes explicites
-  aux données mesurées, aux cartes d'entrée, à la calibration et aux comparaisons
-  finales ; l'optimisation utilise l'adjoint hermitien correspondant. Ce calcul
-  est plus lent et ne constitue pas une inversion générale d'une trajectoire non uniforme.
+Keep the acquisition folder, its GRE/EPI/B0 Twix `.dat` files and their matching
+Pulseq `.seq` files on the destination device. The defaults select
+`acquisition_029_(06)`. The notebooks also require **`data/ACDC_3T.npz` at the
+repository root**, separately from those acquisitions. Use the calibrated 3D
+field maps matching the configured source hash, channel order, units and
+registration; an arbitrary calibration file will fail validation. Retain the
+repository layout, including `Experiment/`, which the notebooks use to locate
+the project root. Adapt the input paths in the configuration cell if necessary.
 
-## MRzero dans 09
+Generated results and caches are excluded from Git. The three simulation
+notebooks regenerate their results from the inputs above and need no saved
+results, compiled Python files or prepared presentation cache.
 
-L'API standard de MRzero utilise un B0 statique par voxel et un déphasage de voxel
-commun à tous les voxels. `native_pdg.py` reprend son exécuteur avec deux extensions
-locales, marquées `GEN09` : B0 effectif à chaque ADC et trajectoire locale par voxel
-pour le noyau natif. Le paquet installé n'est pas modifié.
+The optional `presentation/` source has additional dependencies in
+`presentation/requirements_presentation.txt` and system tools listed there.
+Its historical comparison also needs the external legacy
+`mrzero06_optimization.json` and `.npz` files from the run documented in
+[the presentation README](presentation/README.md); acquisition data alone do
+not reproduce that comparison. On a fresh device, set `REFRESH_INPUTS=True`
+and `RUN_EXPENSIVE=True` in the presentation notebook to regenerate its other
+numerical inputs. Its local pickle cache must be rebuilt on the destination.
 
-Après l'excitation idéale unique, le champ donné à la rotation native est
-`B0_effectif(t)=B0 + intégrale_RF→t(champ_ACDC)/(t−RF)`. L'intégrale conserve toute
-l'histoire des commandes et leur réponse matérielle. Les trajectoires locales
-contiennent aussi les intégrales des gradients ACDC et B0. MRzero applique la
-phase, la relaxation, la réception et ses propres noyaux `box`/`gauss`. Aucun
-facteur de phase ACDC ni de déphasage n'est appliqué au signal en sortie.
-La cohérence résiduelle non résolue utilise ces noyaux natifs à l'intérieur de
-l'exécuteur ; elle reste indépendante des courants, comme dans 08.
+## Usage
 
-Cette représentation est exacte, à la précision numérique native près, pour le
-modèle hérité : spins stationnaires, une excitation idéale non sélective à 90°,
-pas de diffusion ni de refocalisation. Les autres histoires RF sont refusées.
-T1, profil de coupe et état stationnaire ne sont pas mesurés/simulés ; l'amplitude
-effective vient des données. Les gradients sont localement linéaires dans chaque
-voxel. 09 recalcule et exécute le PDG à chaque évaluation et lors de la dérivation
-par blocs : prévoir un temps nettement supérieur à 08.
+Open a notebook in this folder and restart the kernel before switching
+generations. Edit the paths and parameters at the beginning, then run the cells
+in order. Acquisitions and `data/ACDC_3T.npz` remain in the parent folder.
+The required functions are copied here to isolate these generations from the
+earlier notebooks. Only imported runtime modules are included, without older
+notebooks, tests, or generation scripts.
 
-L'exécuteur local est adapté de **MRzeroCore 1.2.0**, sous AGPL v3 ; sa licence
-est conservée dans `LICENSE_MRzeroCore.txt`. Le code a été vérifié avec MRzeroCore
-1.2.0 et PyTorch 2.8.0. Les dépendances du projet parent restent nécessaires.
+The GPU settings and local exports from 06 are retained. For CPU execution, set
+`GPU_REQUIRED=False` and `GPU_PROFILE="cpu"`. To inspect diagnostics without
+optimization, set `RUN_OPTIMIZATION=False`. Field exports remain independent;
+the three `EXPORT_*WAVEFORM*` switches are explained in the parameters.
+Each run writes its results to `results/mrzero08_*`, `results/mrzero08_V2_*`,
+or `results/mrzero09_*`. CSV files remain in `INPUT_DIR/waveform`, as in 06.
 
-## Rapport de première simulation
+## Changes
 
-La cellule « Paramètres de la première simulation » est placée avant la calibration
-EPI et l'optimisation. Elle affiche notamment RF, TE/TR, ADC, PD effective, B0,
-T1/T2/T2dash, B1, diffusion, taille/nombre de voxels, précision, version, paramètres
-PDG, et gain/NRMSE de comparaison au scan EPI. Les différences entre les hypothèses
-simulées et les valeurs réellement acquises sont explicites.
+- **One voxel across the full slice thickness**, with weight 1. The eight
+  sub-slices are removed.
+- ACDC variations across the full width of all three axes and at the eight
+  corners come from the 3D calibration in the measured slice geometry. Voxels
+  without complete coverage are excluded; the remaining signal is not renormalized.
+- The measured B0 map is 2D, so its normal derivative is unknown and assumed
+  zero. The residual dispersion fitted from 32 echoes has no identified spatial direction.
+- 08 applies the three sinc integrals once and differentiates all three factors
+  during optimization. The residual coherence from 06 is retained once.
+- V2 now solves the matrix inverse from the meeting diagram, `s=A m`, rather
+  than only applying the normalized adjoint. All notebook text, comments,
+  figure labels, console messages and generated HTML are in English.
 
-`first_simulation.json` et `first_simulation.npz` conservent ce premier résultat.
-Dans 09, les statistiques du premier bloc natif B0 activé sont identifiées comme
-telles ; la comparaison d'image porte sur tous les ADC de la baseline.
+## Matrix reconstruction in 08 V2
+
+`reconstruction_08.py` forms the actual-trajectory encoding
+`A[i,j]=exp(-2πi k[i]·r[j])`. The factor `2π` is required because the sequence
+reader gives k-space in cycles/metre. One row corresponds to an ADC sample;
+one column corresponds to an output voxel. Receiver data are reconstructed
+separately before RSS combination. Rotation, mirrors and the Fourier origin
+are preserved.
+
+`DFT_REGULARIZATION=0.0` uses the Moore-Penrose inverse, evaluated by SVD.
+Positive values solve `min ||A m-s||²/N_ADC + lambda*||m||²`, equivalent to
+`m=(A.H A + lambda*N_ADC*I)^-1 A.H s`. This is the whiteboard's Tikhonov
+formula with a normalized data term. Small general problems use full SVD,
+including rectangular or rank-deficient encoding matrices. Singular values
+below `rcond=1e-10` times the largest are discarded at zero regularization.
+The code never explicitly forms or inverts a large normal matrix.
+
+For the 128×128 EPI, a full complex128 matrix would occupy 4 GiB. Instead,
+the code factors the same encoding into one phase matrix `Y` and readout
+matrices `X_r`, with `s_r=X_r (Y m)_r`. At full rank, it solves `X_r` then
+`Y`, using only small matrices. Positive regularization requires orthogonal
+phase encoding; that condition is checked before the exact factorized ridge
+solve. Unsupported large geometries fail explicitly. No acquired sample is
+rounded to an ideal trajectory.
+
+The local `MATRIX_DFT_ENABLED` switch uses matrix least squares in all V2
+image reconstructions. `FORCE_DIRECT_DFT` also makes raw navigator transforms
+use matrix products. Input GRE/B0 maps use zero regularization; the configured
+EPI regularization is shared by measured baseline, simulation, nuisance
+calibration and final EPI comparisons. B0 and ACDC remain in the forward model;
+the reconstruction matrix stays fixed during current optimization. The optimizer
+uses `R.H`, the exact adjoint of the inverse `R`, so its gradient remains valid.
+
+The first EPI simulation displays matrix dimensions, numerical rank, condition
+number, regularization and memory use. It saves `dft_reconstruction.json` and,
+when the singular spectrum is available, `dft_singular_values.png`. The notebook
+introduction derives the equations and explains their connection to the meeting
+photo. The lambda curve in that photo is schematic; no optimal lambda is inferred
+from an unknown ground truth. Rerun the cells to generate the English figures.
+The actual 128×128 EPI encoding has a condition number close to one. On that
+nearly Cartesian grid, its matrix inverse closely matches the Fourier adjoint,
+as expected; the reconstruction change alone does not remove B0 distortion.
+
+## MRzero in 09
+
+The standard MRzero API uses a static B0 value per voxel and a common voxel
+dephasing model. `native_pdg.py` adapts its executor with two local extensions,
+marked `GEN09`: effective B0 at each ADC and a local trajectory per voxel for
+the native kernel. The installed package is unchanged.
+
+After the single ideal excitation, the field supplied to the native rotation is
+`B0_effective(t)=B0 + integral_RF→t(ACDC_field)/(t−RF)`. The integral retains the
+complete command history and hardware response. Local trajectories also include
+the integrated ACDC and B0 gradients. MRzero applies phase, relaxation, reception,
+and its own `box`/`gauss` kernels. No ACDC phase or dephasing factor is applied to
+the output signal. Unresolved residual coherence uses these native kernels inside
+the executor and remains independent of currents, as in 08.
+
+This representation is exact within native numerical precision for the inherited
+model: stationary spins, one ideal nonselective 90° excitation, no diffusion,
+and no refocusing. Other RF histories are rejected. T1, the slice profile, and
+the steady state are not measured or simulated; effective amplitude comes from
+the data. Gradients are locally linear within each voxel. 09 recomputes and
+executes the PDG at each evaluation and during gradient calculation in blocks,
+so it takes substantially longer than 08.
+
+The local executor is adapted from **MRzeroCore 1.2.0**, under AGPL v3; its
+license is retained in `LICENSE_MRzeroCore.txt`. The code was checked with
+MRzeroCore 1.2.0 and PyTorch 2.8.0, pinned in this folder's `requirements.txt`.
+
+## First simulation report
+
+The "First simulation parameters" cell appears before EPI calibration and
+optimization. It reports RF, TE/TR, ADC, effective PD, B0, T1/T2/T2dash, B1,
+diffusion, voxel dimensions and count, precision, version, PDG settings,
+and the gain/NRMSE for comparison with the EPI scan. Differences between
+simulation assumptions and acquired values are shown explicitly.
+
+`first_simulation.json` and `first_simulation.npz` preserve this first result.
+In 09, statistics from the first native block with B0 enabled are identified
+as such; image comparison covers all baseline ADC samples.
 
 ## Validation
 
-Les tests associés sont dans `../MRzero_validation/test_generations08_09.py` :
-quadrature 3D indépendante, somme de spins déplacés, gradients des courants,
-contraintes aux coins, couverture/calibration, DFT et adjoint, parité 08/09 avec
-réponse matérielle et dispersions uniforme/gaussienne, dérivation native et rapport
-JSON. Exécution depuis la racine du projet :
+The associated tests are in `../MRzero_validation/test_generations08_09.py`:
+independent 3D quadrature, displaced-spin sums, current gradients, corner
+constraints, coverage/calibration, DFT and adjoint, 08/09 parity with the
+hardware response and uniform/Gaussian dispersion, native gradients, and the
+JSON report. Run them from the project root:
 
 ```bash
 python -m unittest discover -s MRzero_validation -p 'test_generations08_09.py'
+python -m unittest discover -s MRzero_validation -p 'test_matrix_dft_08v2.py'
 ```
 
-La validation disponible ici est CPU ; aucune optimisation complète sur CUDA
-ni nouvelle mesure scanner n'est revendiquée.
+Validation here used the CPU. A complete CUDA optimization and a new scanner
+measurement have not been performed.
 
-Le premier passage 08 sur l'acquisition 029, avec les 60 itérations de fit
-configurées et avant calibration EPI, a simulé 7 785 voxels, chacun sur toute
-l'épaisseur de 5 mm. B0 allait de −87,11 à 250,76 Hz ; le TE simulé était de
-61,3275 ms contre 61,328 ms dans le scan. La NRMSE de magnitude, après un gain
-global de comparaison, était de 45,98 % : ce contrôle valide l'exécution, sans
-établir une concordance quantitative avec le scan. Le rapport montre aussi
-l'excitation idéale simulée à 90° et le flip mesuré à 15° ; la convention
-d'amplitude effective de 06 est conservée, sans inventer une carte T1.
+The first 08 run on acquisition 029, with the configured 60 fitting iterations
+and before EPI calibration, simulated 7,785 voxels, each spanning the full 5 mm
+slice thickness. B0 ranged from −87.11 to 250.76 Hz; simulated TE was 61.3275 ms,
+compared with 61.328 ms in the scan. Magnitude NRMSE after a global comparison
+gain was 45.98%. This confirms execution without establishing quantitative
+agreement with the scan. The report also shows the simulated ideal 90° excitation
+and the acquired 15° flip angle. The effective-amplitude convention from 06
+is retained without introducing an inferred T1 map.
 
-Les 12 tests CPU passent. Un passage de toutes les cellules de 08 a aussi
-réussi avec un fit raccourci, optimisation et exports de waveform désactivés.
-La première simulation de 09, sur le même objet réel préparé, concorde avec
-08 à `1,25e-7` d'erreur relative dans le signal complexe.
+The 12 original CPU tests and 14 matrix-reconstruction tests pass. The matrix
+tests cover dense least squares, rank-deficient and rectangular matrices,
+Tikhonov normal equations, factorized solves, phase sign, frames, exact adjoints,
+and FFT-free execution. Actual EPI/GRE matrix roundtrips have relative errors
+below `7e-15` in float64; the factorized 128×128 reconstruction caches 64.5 MiB
+in complex128 instead of storing a 4 GiB encoding matrix.
+
+All updated 08 V2 cells ran successfully on acquisition 029 with a shortened
+fit, optimization disabled, and waveform exports disabled. All 08 cells also
+ran successfully with a shortened fit,
+optimization disabled, and waveform exports disabled. The first 09 simulation
+on the same prepared measured object agrees with 08 to `1.25e-7` relative error
+in the complex signal.

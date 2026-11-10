@@ -1,7 +1,7 @@
 """Fourier reconstruction and its Hermitian adjoint at actual ADC coordinates.
 
-The reconstruction is the normalized Fourier adjoint, not a least-squares
-inverse for arbitrary nonuniform sampling. Its output grid has the requested
+The default reconstruction is the normalized Fourier adjoint. Generation 08 V2
+enables a separate DFT matrix least-squares inverse with MATRIX_DFT_ENABLED. Its output grid has the requested
 image matrix and FOV, with the FFT origin at ``n // 2``. Every ADC is retained.
 Uniform Cartesian grids use an FFT and an exact offset phase. A trajectory
 with constant ky within each row uses two smaller Fourier operators. Other
@@ -18,6 +18,10 @@ import torch
 # measured-map, baseline, calibration and final-scan reconstructions on the
 # same explicit Fourier-sum implementation as the simulated EPI.
 FORCE_DIRECT_DFT = False
+# V2 enables matrix least squares for measured maps, baseline calibration,
+# final scan comparisons and the model. Other generations retain their
+# original reconstruction. Raw navigator transforms use FORCE_DIRECT_DFT.
+MATRIX_DFT_ENABLED = False
 
 
 class ContinuousReconstruction:
@@ -176,6 +180,15 @@ class ContinuousReconstruction:
             "phase_offset_mInv": offset_y,
             "rounded_or_discarded_samples": 0,
         }
+        self._matrix_solver = None
+        if MATRIX_DFT_ENABLED and not acquisition.get("_skip_matrix_dft", False):
+            from reconstruction_08 import MatrixDFTReconstruction
+            self._matrix_solver = MatrixDFTReconstruction(acquisition, self.device,
+                self.dtype, self.sample_chunk,
+                regularization=acquisition.get("dft_regularization", 0.))
+            self.method = "matrix_dft"
+            self.report = dict(self._matrix_solver.report)
+            self._offset_phase = self._row_x = self._row_y = None
 
     def _real(self, value):
         return torch.as_tensor(value, device=self.device, dtype=self.dtype)
@@ -215,7 +228,9 @@ class ContinuousReconstruction:
         return self._phase(cycles) / self.nsamples
 
     def image(self, kdata):
-        """Apply the normalized Fourier adjoint to all supplied ADC samples."""
+        """Reconstruct ADC samples with the selected fixed linear operator."""
+        if self._matrix_solver is not None:
+            return self._matrix_solver.image(kdata)
         values = self._input(kdata, self.sampling_shape)
         # Existing fast Cartesian paths normalize by nsamples. Apply the
         # relative weights once here; the conjugate operator does the same.
@@ -250,6 +265,8 @@ class ContinuousReconstruction:
 
     def adjoint(self, image):
         """Apply the true Hermitian adjoint of ``image``, including its scale."""
+        if self._matrix_solver is not None:
+            return self._matrix_solver.adjoint(image)
         values = self._input(image, self.image_size)
         return self._unweighted_adjoint(values) * (self._weights * (self.nsamples / self._weight_sum))
 

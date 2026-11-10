@@ -33,19 +33,19 @@ Configurer les données avant cette commande. Le lanceur enregistre les sorties 
 | Dossier | Contenu |
 |---|---|
 | `MRzero_validation/` | Notebooks 01–05 et variantes, modèles MRzero, matériel, sous-spins, géométrie, lecteurs et tests |
-| [`MRzero_generations_08_09/`](MRzero_generations_08_09/README.md) | Générations 08/09 publiées intégralement : notebooks, modules, licences, résultats et caches Python |
+| [`MRzero_generations_08_09/`](MRzero_generations_08_09/README.md) | Générations 08/09 : notebooks, modules, dépendances, licences et sources de présentation |
 | `Experiment/` | Lecteurs Siemens/Pulseq, reconstruction, modèles d'origine et notebooks expérimentaux |
 | `Mrzero_simulation/` | Génération d'acquisitions synthétiques et comparaison aux vérités terrain |
 | `acquisition_*/sequences/` | Fichiers Pulseq `.seq` disponibles pour les acquisitions |
 | Racine et `eval_other_subj/` | Scripts MATLAB historiques |
 
-Tous les notebooks présents lors de la publication sont conservés, y compris les copies de travail. Leurs sorties et états de noyau sont retirés dans la version GitHub ; les versions exécutées locales sont conservées. Exception : les notebooks de `MRzero_generations_08_09/` sont copiés à l'identique avec le reste de ce dossier.
+Tous les notebooks présents lors de la publication sont conservés, y compris les copies de travail. Leurs sorties et états de noyau sont retirés dans la version GitHub ; les versions exécutées locales sont conservées.
 
 Le pipeline Python principal 05 et la variante `v3.2_fast` ne nécessitent pas MATLAB. Certains anciens notebooks expérimentaux dépendent de MATLAB et d'un module externe `ACDC_Optim` ; leurs exigences sont décrites dans le guide. Les publier ne fournit pas ces logiciels externes.
 
 ## Données d'acquisition
 
-En dehors du dossier complet `MRzero_generations_08_09/`, les scans `.dat`, calibrations `.npz`, fichiers MATLAB `.mat`, images reconstruites, résultats, CSV, environnements Python et PDF ne sont pas inclus. Ce dossier contient ses résultats `.npz`, rapports `.json` et visualisations `.html`, sans scans bruts `.dat`. Les acquisitions nécessaires sont à transférer directement sur le serveur. Les noms de fichiers et les contrôles de géométrie/matrice doivent rester cohérents avec les `.seq`.
+Les scans `.dat`, calibrations `.npz`, fichiers MATLAB `.mat`, images reconstruites, résultats, caches, CSV, environnements Python et PDF ne sont pas inclus. Les acquisitions et la calibration `data/ACDC_3T.npz` nécessaires sont à transférer directement sur le serveur. Les noms de fichiers et les contrôles de géométrie/matrice doivent rester cohérents avec les `.seq`.
 
 Dans le notebook 05, régler `INPUT_DIR` et `GRE_EPI_SEQUENCE_NAME` en tête du notebook. La référence GRE et la cartographie B0 sont choisies dans `MRzero_validation/twin_inputs.py`. Pour changer de configuration, relancer depuis les imports.
 

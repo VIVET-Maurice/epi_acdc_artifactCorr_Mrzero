@@ -75,12 +75,12 @@ def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
     initial zero states are checked rather than reported as missing events.
     """
     if origin == 'rf':
-        origin_rf_s, origin_label = 0., 'centre RF'
+        origin_rf_s, origin_label = 0., 'RF center'
     elif origin == 'first_imaging_trigger':
         if trigger_rf_s is None:
             raise ValueError("trigger_rf_s is required for a trigger-relative plot.")
         origin_rf_s = _finite_scalar(trigger_rf_s, 'trigger_rf_s')
-        origin_label = "trigger d'imagerie"
+        origin_label = 'imaging trigger'
     else:
         raise ValueError("origin must be 'rf' or 'first_imaging_trigger'.")
     mapping, polarity = _output_mapping(model.nc, channel_map, channel_polarity)
@@ -168,55 +168,49 @@ def waveform_plot_data(model, currents_A, *, origin='rf', trigger_rf_s=None,
     return data
 
 
-def plot_acdc_waveform(model, currents_A, *, language='fr', **options):
-    """Return (figure, report), with French or English display labels.
+def plot_acdc_waveform(model, currents_A, *, language='en', **options):
+    """Return (figure, report), with English display labels.
 
-    Language changes presentation only. French is the historical default;
-    notebook 07 requests English explicitly.
+    The language argument is retained for compatibility with earlier callers;
+    both accepted values use the English labels of generations 08 and 09.
     """
     if language not in ('fr', 'en'):
         raise ValueError("language must be 'fr' or 'en'.")
 
-    def label(french, english):
-        return english if language == 'en' else french
-
     data = waveform_plot_data(model, currents_A, **options)
     report, csv = data['report'], data['csv']
-    if language == 'en':
-        report['origin_label'] = ('RF centre' if report['origin'] == 'rf' else 'imaging trigger')
-    report['language'] = language
+    report['language'] = 'en'
     fig, axes = plt.subplots(2, 1, figsize=(14, 8), layout='constrained')
     # When available, display the actual file commands rather than a second
     # copy of the intended model commands. The physical prediction is labelled.
     if csv is None:
-        command_time, commands, command_label = data['time_ms'], data['commanded_A'], label('Commandes DAC du modèle', 'Model DAC commands')
+        command_time, commands, command_label = data['time_ms'], data['commanded_A'], 'Model DAC commands'
     else:
-        command_time, commands, command_label = csv['time_ms'], csv['commanded_A'], label('Commandes lues dans le CSV', 'Commands read from CSV')
+        command_time, commands, command_label = csv['time_ms'], csv['commanded_A'], 'Commands read from CSV'
     for row, values in enumerate(commands):
         axes[0].step(command_time, values, where='post', color='gray', alpha=.22,
                      linewidth=.65, label=command_label if row == 0 else None)
     for row, values in enumerate(data['actual_A']):
         axes[0].plot(data['time_ms'], values, alpha=.65, linewidth=.8,
-                     label=label('Courants physiques prédits', 'Predicted physical currents') if row == 0 else None)
+                     label='Predicted physical currents' if row == 0 else None)
     axes[0].axvline(report['final_zero_from_origin_ms'], color='black', linestyle='--',
-                    label=label('Retour commandé à zéro', 'Commanded return to zero'))
-    time_label = label(f"Temps depuis {report['origin_label']} [ms]", f"Time from {report['origin_label']} [ms]")
+                    label='Commanded return to zero')
+    time_label = f"Time from {report['origin_label']} [ms]"
     if report['pre_origin_samples_retained']:
-        time_label += label(' — temps négatifs : avant le trigger', ' — negative times precede the trigger')
-    axes[0].set(xlabel=time_label, ylabel=label('Courant de sortie [A]', 'Output current [A]'),
-                title=label('Forme d’onde ACDC complète — prédiction et commandes', 'Complete ACDC waveform — prediction and commands'))
+        time_label += ' — negative times precede the trigger'
+    axes[0].set(xlabel=time_label, ylabel='Output current [A]',
+                title='Complete ACDC waveform — prediction and commands')
     axes[0].legend()
     axes[1].step(data['zoom_time_us'], data['zoom_commanded_A'], where='post',
-                 color='gray', linestyle='--', label=label('Commande DAC du modèle', 'Model DAC command'))
+                 color='gray', linestyle='--', label='Model DAC command')
     if csv is not None:
         axes[1].step(csv['zoom_time_us'], csv['commanded_A'][report['selected_physical_output'] - 1],
-                     where='post', color='black', alpha=.8, label=label('Commande CSV', 'CSV command'))
-    axes[1].plot(data['zoom_time_us'], data['zoom_actual_A'], label=label('Courant physique prédit', 'Predicted physical current'))
-    axes[1].set(xlabel=label('Temps depuis le changement sélectionné [µs]', 'Time from the selected transition [µs]'),
-        ylabel=label('Courant de sortie [A]', 'Output current [A]'),
+                     where='post', color='black', alpha=.8, label='CSV command')
+    axes[1].plot(data['zoom_time_us'], data['zoom_actual_A'], label='Predicted physical current')
+    axes[1].set(xlabel='Time from the selected transition [µs]',
+        ylabel='Output current [A]',
         xlim=(float(data['zoom_time_us'].min()), float(data['zoom_time_us'].max())),
-        title=label(f"Sortie {report['selected_physical_output']} : changement à {report['transition_time_from_origin_ms']:.3f} ms depuis {report['origin_label']} ; τ={report['selected_tau_us']:.2f} µs",
-                    f"Output {report['selected_physical_output']}: transition at {report['transition_time_from_origin_ms']:.3f} ms from {report['origin_label']}; τ={report['selected_tau_us']:.2f} µs"))
+        title=f"Output {report['selected_physical_output']}: transition at {report['transition_time_from_origin_ms']:.3f} ms from {report['origin_label']}; τ={report['selected_tau_us']:.2f} µs")
     axes[1].legend()
     return fig, report
 

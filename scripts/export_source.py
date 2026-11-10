@@ -1,9 +1,8 @@
-"""Export portable sources and explicitly complete directories for GitHub.
+"""Export portable sources for GitHub without generated caches or results.
 
 The destination is a separate checkout. Existing destination files are never
 removed, and local executed notebooks are never edited by this exporter.
-Complete directories retain every regular file byte for byte, including results,
-caches, and notebook outputs; the other sources keep the portable export policy.
+Exported notebooks have their saved outputs and execution state removed.
 """
 from __future__ import annotations
 
@@ -17,16 +16,22 @@ from pathlib import Path
 import nbformat
 
 ROOT = Path(__file__).resolve().parents[1]
-CODE_DIRS = ("Experiment", "MRzero_validation", "Mrzero_simulation", "docs", "scripts", "eval_other_subj")
-COMPLETE_DIRECTORIES = ("MRzero_generations_08_09",)
+CODE_DIRS = ("Experiment", "MRzero_validation", "Mrzero_simulation", "docs", "scripts", "eval_other_subj",
+             "MRzero_generations_08_09")
 SUFFIXES = {".py", ".m", ".md", ".ipynb", ".sh", ".ps1", ".yml", ".yaml", ".toml"}
-SKIP_DIRS = {"__pycache__", ".git", "tmp", "pipeline_validation", "simulation_metadata", ".ipynb_checkpoints"}
+SKIP_DIRS = {"__pycache__", ".git", "tmp", "pipeline_validation", "simulation_metadata", ".ipynb_checkpoints",
+             "cache", "caches", ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache", "venv"}
+PRESENTATION_GENERATED_DIRS = {"data", "figures", "equations", "rendered", "source_render"}
+
+
+def is_source_file(path):
+    return (path.suffix in SUFFIXES or path.name.startswith("LICENSE")
+            or path.name.startswith("requirements") and path.suffix == ".txt")
 
 
 def source_files():
     for path in ROOT.iterdir():
-        if path.is_file() and (path.suffix in SUFFIXES or path.name in {".gitignore", ".gitattributes", "LICENSE"}
-                               or path.name.startswith("requirements") and path.suffix == ".txt"):
+        if path.is_file() and (is_source_file(path) or path.name in {".gitignore", ".gitattributes"}):
             yield path
     for name in CODE_DIRS:
         directory = ROOT / name
@@ -35,19 +40,18 @@ def source_files():
         for current, directories, names in os.walk(directory):
             directories[:] = [name for name in directories if name not in SKIP_DIRS
                                and not name.startswith((".venv", "results", "acquisition_synthetic", "_audit_twix_"))]
+            if Path(current) == ROOT / "MRzero_generations_08_09" / "presentation":
+                directories[:] = [name for name in directories if name not in PRESENTATION_GENERATED_DIRS]
             for name in names:
                 path = Path(current) / name
-                if path.name == "LICENSE" or path.suffix in SUFFIXES or path.name.startswith("requirements") and path.suffix == ".txt":
+                if (path.parent == ROOT / "MRzero_generations_08_09"
+                        and path.name.startswith("Codex_prompt")):
+                    continue
+                if is_source_file(path):
                     yield path
     for path in sorted(ROOT.glob("acquisition_*/sequences/*.seq")):
         if path.is_file():
             yield path
-    for name in COMPLETE_DIRECTORIES:
-        directory = ROOT / name
-        if directory.is_dir():
-            for path in directory.rglob("*"):
-                if path.is_file() and not path.is_symlink():
-                    yield path
 
 
 def portable_notebook(path):
@@ -92,26 +96,14 @@ def export(destination):
     # A destination inside tmp/ is convenient for the first publication.
     destination.mkdir(parents=True, exist_ok=True)
     files, notebooks = [], {}
-    complete_directories = set()
     raw_acquisitions_included = False
     calibrations_included = False
     saved_notebook_outputs_included = False
     for source in sorted(set(source_files())):
         relative = source.relative_to(ROOT)
-        complete_directory = next((name for name in COMPLETE_DIRECTORIES
-                                   if relative.is_relative_to(name)), None)
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        if complete_directory is not None:
-            complete_directories.add(complete_directory)
-            content = source.read_bytes()
-            if source.suffix == ".ipynb":
-                notebook = nbformat.read(source, as_version=4)
-                nbformat.validate(notebook)
-                notebooks[relative.as_posix()] = ["complete directory preserved byte for byte"]
-                saved_notebook_outputs_included |= any(
-                    cell.get("outputs") for cell in notebook.cells if cell.cell_type == "code")
-        elif source.suffix == ".ipynb":
+        if source.suffix == ".ipynb":
             content, changes = portable_notebook(source)
             notebooks[relative.as_posix()] = changes
         elif relative.as_posix() in {"MRzero_validation/build_experiment_notebook.py", "Mrzero_simulation/build_synthetic_notebooks.py"}:
@@ -124,7 +116,7 @@ def export(destination):
             content = text.encode("utf-8")
         else:
             content = source.read_bytes()
-        if complete_directory is None and source.suffix != ".seq":
+        if source.suffix != ".seq":
             # Match Git's LF checkout so manifest hashes also work on Linux.
             content = content.removeprefix(b"\xef\xbb\xbf").replace(b"\r\n", b"\n")
         target.write_bytes(content)
@@ -134,9 +126,9 @@ def export(destination):
         calibrations_included |= (
             "calibration" in source.stem.lower()
             and source.suffix.lower() in {".npz", ".npy", ".mat", ".h5", ".hdf5"})
-    manifest = {"scope": "Portable sources, notebooks without saved outputs, and Pulseq sequence files; "
-                         "complete directories retain every regular file byte for byte",
-                "complete_directories": sorted(complete_directories),
+    manifest = {"scope": "Portable sources, notebooks without saved outputs, dependencies, licenses, "
+                         "and Pulseq sequence files; generated caches and results are excluded",
+                "complete_directories": [],
                 "raw_acquisitions_included": raw_acquisitions_included,
                 "calibrations_included": calibrations_included,
                 "saved_notebook_outputs_included": saved_notebook_outputs_included,
