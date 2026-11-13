@@ -17,7 +17,7 @@ import nbformat
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE_DIRS = ("Experiment", "MRzero_validation", "Mrzero_simulation", "docs", "scripts", "eval_other_subj",
-             "MRzero_generations_08_09")
+             "MRzero_generations_08_09", "MRzero_generation_10", "image_objective_analysis_08")
 SUFFIXES = {".py", ".m", ".md", ".ipynb", ".sh", ".ps1", ".yml", ".yaml", ".toml"}
 SKIP_DIRS = {"__pycache__", ".git", "tmp", "pipeline_validation", "simulation_metadata", ".ipynb_checkpoints",
              "cache", "caches", ".cache", ".pytest_cache", ".mypy_cache", ".ruff_cache", "venv"}

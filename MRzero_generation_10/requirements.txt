@@ -1,0 +1,10 @@
+# Same environment as generations 08/09 (Python 3.11).
+# Install the PyTorch 2.8.0 CPU/CUDA build that matches the computer first.
+torch==2.8.0
+MRzeroCore==1.2.0
+numpy==2.4.6
+scipy==1.17.1
+matplotlib==3.11.2
+nbformat==5.11.1
+nbclient==0.11.0
+ipykernel>=6.29,<8

@@ -34,6 +34,8 @@ Configurer les données avant cette commande. Le lanceur enregistre les sorties 
 |---|---|
 | `MRzero_validation/` | Notebooks 01–05 et variantes, modèles MRzero, matériel, sous-spins, géométrie, lecteurs et tests |
 | [`MRzero_generations_08_09/`](MRzero_generations_08_09/README.md) | Générations 08/09 : notebooks, modules, dépendances, licences et sources de présentation |
+| [`MRzero_generation_10/`](MRzero_generation_10/README.md) | Génération 10 : optimisation de la phase des échos EPI sur fantôme numérique |
+| [`image_objective_analysis_08/`](image_objective_analysis_08/README.md) | Analyse et reproduction du critère d'optimisation d'image de la génération 08 |
 | `Experiment/` | Lecteurs Siemens/Pulseq, reconstruction, modèles d'origine et notebooks expérimentaux |
 | `Mrzero_simulation/` | Génération d'acquisitions synthétiques et comparaison aux vérités terrain |
 | `acquisition_*/sequences/` | Fichiers Pulseq `.seq` disponibles pour les acquisitions |

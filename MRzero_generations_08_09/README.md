@@ -11,6 +11,40 @@ disabled output 9, the hardware response, and the measured GRE target.
 | `08_V2_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Same as 08 | Same as 08 | DFT encoding matrix, SVD least-squares inverse, optional Tikhonov; no FFT/IFFT |
 | `09_acdc_echo32_b0_s0_t2star_MRzero.ipynb` | Physical voxel dimensions and native MRzero voxel kernels inside the simulator | Total B0 history inside the simulator; PDG recomputed at each evaluation | Same operator as 08 |
 
+## Simple sphere phantom: 08 V3
+
+`08_V3_acdc_sphere_MRzero.ipynb` replaces measured-twin preparation with a
+known uniform sphere slice, built by `sphere_phantom_08.py`. It reads only the
+EPI `.seq` and `data/ACDC_3T.npz`; no Twix data, multi-echo fitting or measured
+GRE target is required. Select the same scientific Python kernel as 08 and run
+the cells in order.
+
+The default object has radius 60 mm, a central 5 mm slice, PD = 1 and
+T2* = infinity. A 4 mm radius air bubble at (15, -10, -18) mm supplies a
+susceptibility-induced B0 perturbation below the slice, with assumed contrast
++9.4 ppm at 3 T and the main field along Z. Set `BUBBLE_RADIUS_MM=0.` for the
+unperturbed test. Since 08 models one 2D slice, the sphere is represented by its
+voxelised axial cross-section, with one uniform full-thickness box per pixel.
+The curved boundary inside edge voxels and the RF slice profile are not
+resolved. Generation 08's MRzero histories, three-sinc integral and existing
+reconstruction are retained.
+
+Edit the parameter cell to prescribe B0 offset, X/Y/Z gradients, T2*, sphere
+radius, bubble geometry or slice offset. The bubble field and its analytic
+X/Y/Z derivatives follow the exterior spherical-susceptibility formula
+([Eq. 3](https://pmc.ncbi.nlm.nih.gov/articles/PMC3465725/)). The bubble must lie
+entirely below the slab. Each voxel retains 08's locally linear three-sinc
+approximation; the report quantifies its error against the exact bubble field
+at voxel corners. The host sphere's own susceptibility boundary is omitted.
+The ACDC placement is virtual: synthetic X/Y align
+with the calibration axes and `COIL_CENTER_MM` sets the sphere centre in that
+volume. Incomplete calibration coverage raises an error instead of cropping
+the object. `RUN_OPTIMIZATION=True` enables the existing bounded ACDC optimizer
+against the numerical zero-B0 reference; it is initially disabled.
+
+Each run saves figures, complex signals, images, currents, a first-simulation
+parameter report and validation results in `results/mrzero08_V3_sphere_*`.
+
 ## Installation and required data
 
 Use a separate Python 3.11 environment for these generations. Their native
